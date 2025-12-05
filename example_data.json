@@ -1,0 +1,18 @@
+[
+    {"text": "This is a positive review about the product.", "label": 0},
+    {"text": "I really enjoyed using this service.", "label": 0},
+    {"text": "The quality is excellent and I'm very satisfied.", "label": 0},
+    {"text": "This product is okay, nothing special.", "label": 1},
+    {"text": "It works as expected but could be better.", "label": 1},
+    {"text": "Average quality, meets basic requirements.", "label": 1},
+    {"text": "I'm not impressed with this product.", "label": 2},
+    {"text": "The service was disappointing.", "label": 2},
+    {"text": "This could be much better.", "label": 2},
+    {"text": "This is terrible, I want a refund.", "label": 3},
+    {"text": "Very poor quality, do not recommend.", "label": 3},
+    {"text": "Worst product I've ever used.", "label": 3},
+    {"text": "I have mixed feelings about this.", "label": 4},
+    {"text": "Some aspects are good, others are not.", "label": 4},
+    {"text": "It's hard to form an opinion on this.", "label": 4}
+]
+
