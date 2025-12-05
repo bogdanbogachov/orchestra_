@@ -1,5 +1,5 @@
 from transformers import AutoTokenizer, AutoModel
-from transformers.models.llama.modeling_llama import LlamaModel, LlamaClassificationHead
+from custom_llama_classification import LlamaClassificationHead
 import torch
 
 # Model path
