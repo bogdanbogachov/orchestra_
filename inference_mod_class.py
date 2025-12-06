@@ -42,6 +42,4 @@ if __name__ == "__main__":
     result = classify(text)
     
     print(f"\nText: {text}")
-    print(f"Logits: {result['logits']}")
-    print(f"Probabilities: {result['probs']}")
     print(f"Predicted class: {result['probs'].argmax(dim=-1).item()}")
