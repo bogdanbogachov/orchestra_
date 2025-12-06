@@ -15,7 +15,7 @@ from transformers import (
     DataCollatorWithPadding
 )
 from transformers.modeling_outputs import SequenceClassifierOutput
-from transformers.models.llama.modeling_llama import LlamaClassificationHead
+from custom_llama_classification import LlamaClassificationHead
 from peft import LoraConfig, get_peft_model, TaskType
 import json
 from typing import Optional, List, Dict
