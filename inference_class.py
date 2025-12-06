@@ -27,13 +27,13 @@ def classify(input_text, labels=None):
 
     probs = torch.nn.functional.softmax(model_output_logits, dim=-1)  # [B, num_labels]
 
-    result = {
+    output = {
         'logits': model_output_logits,
         'probs': probs,
         'loss': outputs.loss
     }
 
-    return result
+    return output
 
 if __name__ == "__main__":
     text = "What is machine learning?"
