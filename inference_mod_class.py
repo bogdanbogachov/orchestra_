@@ -19,7 +19,8 @@ def classify(input_text, labels=None):
     classifier = LlamaClassificationHead(
         config=base_model.config,
         num_labels=5,
-        pooling_strategy="mean"  # Options: "mean", "max", "last", "attention"
+        pooling_strategy="mean",  # Options: "mean", "max", "last", "attention"
+        use_fft=True
     ).to(base_model.device)
 
     inputs = tokenizer(input_text, return_tensors="pt", padding=True, truncation=True)
@@ -38,7 +39,7 @@ def classify(input_text, labels=None):
     return output
 
 if __name__ == "__main__":
-    text = "What is machine learning?"
+    text = "What is machine learning my dear smart amazing friend lol?"
     result = classify(text)
     
     print(f"\nText: {text}")
