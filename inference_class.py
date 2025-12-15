@@ -1,8 +1,9 @@
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
+from peft import PeftModel
 import torch
 
 
-def classify(input_text, labels=None):
+def classify(input_text, labels=None, adapter_path=None):
     model_path = "downloaded_models/downloaded_3_2_1b"
 
     tokenizer = AutoTokenizer.from_pretrained(model_path)
@@ -16,6 +17,11 @@ def classify(input_text, labels=None):
         dtype=torch.float32,
         device_map="auto"
     )
+
+    if adapter_path:
+        print(f"Loading LoRA adapters from {adapter_path}...")
+        model = PeftModel.from_pretrained(model, adapter_path)
+        print("✓ LoRA adapters loaded")
 
     inputs = tokenizer(input_text, return_tensors="pt", padding=True, truncation=True)
     inputs = {k: v.to(model.device) for k, v in inputs.items()}
@@ -36,8 +42,10 @@ def classify(input_text, labels=None):
     return output
 
 if __name__ == "__main__":
-    text = "What is machine learning?"
-    result = classify(text)
+    text = "What is machine learning my dear smart amazing friend lol?"
+    
+    result = classify(text, adapter_path="path")
     
     print(f"\nText: {text}")
-    print(f"Default predicted class: {result['probs'].argmax(dim=-1).item()}")
+    print(f"Predicted class: {result['probs'].argmax(dim=-1).item()}")
+    print(f"Class probabilities: {result['probs'].tolist()}")
