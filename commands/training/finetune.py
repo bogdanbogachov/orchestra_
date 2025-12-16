@@ -5,6 +5,7 @@ from sklearn.model_selection import train_test_split
 from config import CONFIG
 from commands.training.dataset import ClassificationDataset
 from commands.training.model import load_model_and_tokenizer, setup_lora, CustomClassificationModel
+from logging import logger
 
 def load_data(data_path: str):
     with open(data_path, 'r') as f:
@@ -38,7 +39,7 @@ def run_finetune():
     train_dataset = ClassificationDataset(train_texts, train_labels, tokenizer, max_length=max_length)
     val_dataset = ClassificationDataset(val_texts, val_labels, tokenizer, max_length=max_length)
 
-    print(f"✓ Split data: {len(train_texts)} train, {len(val_texts)} validation ({data_config['test_size']*100:.1f}%)")
+    logger.info(f"✓ Split data: {len(train_texts)} train, {len(val_texts)} validation ({data_config['test_size']*100:.1f}%)")
 
     training_args = TrainingArguments(
         output_dir=output_dir,

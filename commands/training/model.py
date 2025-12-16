@@ -8,6 +8,7 @@ from transformers.modeling_outputs import SequenceClassifierOutput
 from models.custom_llama_classification import LlamaClassificationHead
 from peft import LoraConfig, get_peft_model, TaskType
 from config import CONFIG
+from logging import logger
 
 class CustomClassificationModel(torch.nn.Module):
     def __init__(self, base_model, classifier):
@@ -62,7 +63,7 @@ def load_model_and_tokenizer():
         ).to(base_model.device)
         
         model = CustomClassificationModel(base_model, classifier)
-        print(f"✓ Loaded base model with custom classification head")
+        logger.info(f"✓ Loaded base model with custom classification head")
     else:
         model = AutoModelForSequenceClassification.from_pretrained(
             model_path,
@@ -72,7 +73,7 @@ def load_model_and_tokenizer():
         )
         if model.config.pad_token_id is None:
             model.config.pad_token_id = tokenizer.pad_token_id
-        print("✓ Loaded model with default classification head")
+        logger.info("✓ Loaded model with default classification head")
 
     return model, tokenizer, use_custom_head
 
@@ -106,9 +107,9 @@ def setup_lora(model, use_custom_head: bool):
 
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     total_params = sum(p.numel() for p in model.parameters())
-    print(f"✓ LoRA configured")
-    print(f"  Trainable parameters: {trainable_params:,} ({100 * trainable_params / total_params:.2f}%)")
-    print(f"  Total parameters: {total_params:,}")
-    print(f"  Classification head is trainable")
+    logger.info(f"✓ LoRA configured")
+    logger.info(f"  Trainable parameters: {trainable_params:,} ({100 * trainable_params / total_params:.2f}%)")
+    logger.info(f"  Total parameters: {total_params:,}")
+    logger.info(f"  Classification head is trainable")
 
     return model

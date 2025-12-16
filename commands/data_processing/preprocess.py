@@ -2,16 +2,17 @@ import json
 from sklearn.model_selection import train_test_split
 from collections import Counter
 from config import CONFIG
+from logging import logger
 
 def print_statistics(data, name):
     labels = [item["label"] for item in data]
     label_counts = Counter(labels)
     
-    print(f"\n{name} Statistics:")
-    print(f"  Total examples: {len(data)}")
-    print(f"  Label distribution:")
+    logger.info(f"\n{name} Statistics:")
+    logger.info(f"  Total examples: {len(data)}")
+    logger.info(f"  Label distribution:")
     for label in sorted(label_counts.keys()):
-        print(f"    Label {label}: {label_counts[label]} examples")
+        logger.info(f"    Label {label}: {label_counts[label]} examples")
 
 
 def run_preprocess():
@@ -49,5 +50,5 @@ def run_preprocess():
     with open(test_output, 'w') as f:
         json.dump(test_data, f, indent=2)
     
-    print(f"\n✓ Saved {len(train_data)} training examples to {train_output}")
-    print(f"✓ Saved {len(test_data)} test examples to {test_output}")
+    logger.info(f"\n✓ Saved {len(train_data)} training examples to {train_output}")
+    logger.info(f"✓ Saved {len(test_data)} test examples to {test_output}")
