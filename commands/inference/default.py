@@ -3,7 +3,7 @@ from peft import PeftModel
 import torch
 import os
 from config import CONFIG
-from logging import logger
+from logger_config import logger
 
 def run_infer_default(input_text, labels=None, adapter_path=None):
     model_config = CONFIG['model']

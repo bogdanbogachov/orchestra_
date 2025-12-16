@@ -8,7 +8,7 @@ from transformers.modeling_outputs import SequenceClassifierOutput
 from models.custom_llama_classification import LlamaClassificationHead
 from peft import LoraConfig, get_peft_model, TaskType
 from config import CONFIG
-from logging import logger
+from logger_config import logger
 
 class CustomClassificationModel(torch.nn.Module):
     def __init__(self, base_model, classifier):

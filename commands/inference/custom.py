@@ -4,7 +4,7 @@ from peft import PeftModel
 import torch
 import os
 from config import CONFIG
-from logging import logger
+from logger_config import logger
 
 def run_infer_custom(input_text, labels=None, adapter_path=None):
     model_config = CONFIG['model']
@@ -46,13 +46,7 @@ def run_infer_custom(input_text, labels=None, adapter_path=None):
                 use_fft=model_config['use_fft']
             ).to(base_model.device)
     else:
-        logger.info(f"Adapter path {adapter_path} not found, using base model with randomly initialized classifier")
-        classifier = LlamaClassificationHead(
-            config=base_model.config,
-            num_labels=model_config['num_labels'],
-            pooling_strategy=model_config['pooling_strategy'],
-            use_fft=model_config['use_fft']
-        ).to(base_model.device)
+        logger.info(f"Adapter path {adapter_path} not found.")
 
     inputs = tokenizer(input_text, return_tensors="pt", padding=True, truncation=True)
     inputs = {k: v.to(base_model.device) for k, v in inputs.items()}

@@ -2,7 +2,7 @@ import json
 from sklearn.model_selection import train_test_split
 from collections import Counter
 from config import CONFIG
-from logging import logger
+from logger_config import logger
 
 def print_statistics(data, name):
     labels = [item["label"] for item in data]

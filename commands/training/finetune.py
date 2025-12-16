@@ -5,8 +5,8 @@ from transformers import TrainingArguments, Trainer, DataCollatorWithPadding
 from sklearn.model_selection import train_test_split
 from config import CONFIG
 from commands.training.dataset import ClassificationDataset
-from commands.training.model import load_model_and_tokenizer, setup_lora, CustomClassificationModel
-from logging import logger
+from commands.training.model import load_model_and_tokenizer, setup_lora
+from logger_config import logger
 
 def load_data(data_path: str):
     with open(data_path, 'r') as f:

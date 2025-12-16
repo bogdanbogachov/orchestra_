@@ -7,10 +7,11 @@ paths:
     test: "test_data.json"
 
 model:
-  num_labels: 50
-  use_custom_head: false
+  use_custom_head: true
   pooling_strategy: "mean"
   use_fft: true
+
+  num_labels: 2
   pad_token: "<|reserved_special_token_15|>"
   torch_dtype: "float32"
   device_map: "auto"
@@ -45,7 +46,7 @@ data_processing:
   random_state: 42
   stratify: true
 
-experiment: "orchestra"
+experiment: "test"
 
 logging:
   log_dir: "logs"
