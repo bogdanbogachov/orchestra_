@@ -1,11 +1,3 @@
-paths:
-  model: "downloaded_models/downloaded_3_2_1b"
-  experiments: "experiments"
-  data:
-    training: "training_data.json"
-    train: "train_data.json"
-    test: "test_data.json"
-
 model:
   use_custom_head: true
   pooling_strategy: "mean"
@@ -15,6 +7,17 @@ model:
   pad_token: "<|reserved_special_token_15|>"
   torch_dtype: "float32"
   device_map: "auto"
+
+evaluation:
+  head: "custom_head"   # "default_head" | "custom_head"
+
+paths:
+  model: "downloaded_models/downloaded_3_2_1b"
+  experiments: "experiments"
+  data:
+    training: "training_data.json"
+    train: "train_data.json"
+    test: "test_data.json"
 
 lora:
   r: 8
