@@ -1,11 +1,18 @@
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 from peft import PeftModel
 import torch
+import os
 from config import CONFIG
+from logging import logger
 
 def run_infer_default(input_text, labels=None, adapter_path=None):
     model_config = CONFIG['model']
     model_path = CONFIG['paths']['model']
+    paths_config = CONFIG['paths']
+    experiment_name = CONFIG.get('experiment', 'orchestra')
+    
+    if adapter_path is None:
+        adapter_path = os.path.join(paths_config['experiments'], experiment_name, "default_head")
     
     tokenizer = AutoTokenizer.from_pretrained(model_path)
 
@@ -22,8 +29,12 @@ def run_infer_default(input_text, labels=None, adapter_path=None):
         device_map=model_config['device_map']
     )
 
-    if adapter_path:
+    if os.path.exists(adapter_path):
+        logger.info(f"Loading LoRA adapters from {adapter_path}")
         model = PeftModel.from_pretrained(model, adapter_path)
+        logger.info(f"✓ Loaded finetuned score layer (classification head) from adapter")
+    else:
+        logger.info(f"Adapter path {adapter_path} not found, using base model with untrained score layer")
 
     inputs = tokenizer(input_text, return_tensors="pt", padding=True, truncation=True)
     inputs = {k: v.to(model.device) for k, v in inputs.items()}

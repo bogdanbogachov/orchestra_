@@ -27,7 +27,6 @@ lora:
   bias: "none"
 
 training:
-  output_dir: "default_head"
   max_length: 512
   num_train_epochs: 4
   per_device_train_batch_size: 4

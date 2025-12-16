@@ -1,5 +1,6 @@
 import torch
 import json
+import os
 from transformers import TrainingArguments, Trainer, DataCollatorWithPadding
 from sklearn.model_selection import train_test_split
 from config import CONFIG
@@ -21,13 +22,19 @@ def run_finetune():
     training_config = CONFIG['training']
     data_config = CONFIG['data_processing']
     paths_config = CONFIG['paths']
-    
-    output_dir = training_config['output_dir']
-    max_length = training_config['max_length']
+    experiment_name = CONFIG.get('experiment', 'orchestra')
+    experiments_dir = paths_config['experiments']
     
     model, tokenizer, use_custom_head = load_model_and_tokenizer()
     model = setup_lora(model, use_custom_head)
-
+    
+    head_type = "custom_head" if use_custom_head else "default_head"
+    output_dir = os.path.join(experiments_dir, experiment_name, head_type)
+    os.makedirs(output_dir, exist_ok=True)
+    max_length = training_config['max_length']
+    
+    logger.info(f"Training {head_type} - output directory: {output_dir}")
+    
     all_texts, all_labels = load_data(paths_config['data']['train'])
     train_texts, val_texts, train_labels, val_labels = train_test_split(
         all_texts, all_labels, 
@@ -73,7 +80,10 @@ def run_finetune():
         model.base_model.save_pretrained(output_dir)
         classifier_path = f"{output_dir}/classifier.pt"
         torch.save(model.classifier.state_dict(), classifier_path)
+        logger.info(f"✓ Saved custom classifier to {classifier_path}")
     else:
         trainer.save_model()
+        logger.info(f"✓ Saved default head model with finetuned score layer to {output_dir}")
     
     tokenizer.save_pretrained(output_dir)
+    logger.info(f"✓ Saved tokenizer to {output_dir}")

@@ -4,10 +4,16 @@ from peft import PeftModel
 import torch
 import os
 from config import CONFIG
+from logging import logger
 
 def run_infer_custom(input_text, labels=None, adapter_path=None):
     model_config = CONFIG['model']
     model_path = CONFIG['paths']['model']
+    paths_config = CONFIG['paths']
+    experiment_name = CONFIG.get('experiment', 'orchestra')
+    
+    if adapter_path is None:
+        adapter_path = os.path.join(paths_config['experiments'], experiment_name, "custom_head")
     
     tokenizer = AutoTokenizer.from_pretrained(model_path)
 
@@ -23,13 +29,16 @@ def run_infer_custom(input_text, labels=None, adapter_path=None):
         device_map=model_config['device_map']
     )
 
-    if adapter_path:
+    if os.path.exists(adapter_path):
+        logger.info(f"Loading LoRA adapters from {adapter_path}")
         base_model = PeftModel.from_pretrained(base_model, adapter_path)
 
         classifier_path = os.path.join(adapter_path, "classifier.pt")
         if os.path.exists(classifier_path):
+            logger.info(f"Loading fine-tuned classifier from {classifier_path}")
             classifier = torch.load(classifier_path, map_location=base_model.device)
         else:
+            logger.info("Classifier not found, using randomly initialized classifier")
             classifier = LlamaClassificationHead(
                 config=base_model.config,
                 num_labels=model_config['num_labels'],
@@ -37,6 +46,7 @@ def run_infer_custom(input_text, labels=None, adapter_path=None):
                 use_fft=model_config['use_fft']
             ).to(base_model.device)
     else:
+        logger.info(f"Adapter path {adapter_path} not found, using base model with randomly initialized classifier")
         classifier = LlamaClassificationHead(
             config=base_model.config,
             num_labels=model_config['num_labels'],

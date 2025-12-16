@@ -110,6 +110,9 @@ def setup_lora(model, use_custom_head: bool):
     logger.info(f"✓ LoRA configured")
     logger.info(f"  Trainable parameters: {trainable_params:,} ({100 * trainable_params / total_params:.2f}%)")
     logger.info(f"  Total parameters: {total_params:,}")
-    logger.info(f"  Classification head is trainable")
+    if use_custom_head:
+        logger.info(f"  Custom classifier head is trainable (will be saved separately)")
+    else:
+        logger.info(f"  Default score layer (classification head) is trainable (will be saved in adapter)")
 
     return model
