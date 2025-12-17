@@ -27,3 +27,26 @@ hf auth login
 # Download using huggingface-cli (you may need to login first)
 hf download meta-llama/Llama-3.2-1B --local-dir downloaded_models/downloaded_3_2_1b
 ```
+
+## 3. Running Experiments on Compute Canada Clusters
+
+### 3.1 Cluster Submission Process
+
+For each experiment:
+
+job.sh setup:
+- Enter your email to receive notifications about your jobs
+- Estimate time required for a specific job
+- Choose appropriate resources (for llama 2 fine-tuning GPU partitioning is desired)
+
+   ```bash
+   export EXP=experiment_name                             
+   export EVAL=eval_head_type
+   export CUSTOM=boolean_head_type
+   export POOL=pooling_strategy
+   export D_INF=boolean
+   export C_INF=boolean
+   sbatch --job-name="$EXP" --output="${EXP}.out" --error="${EXP}.err" job.sh
+   ```
+
+**Important**: Environment variables override respective variables in `config.yaml`.

@@ -15,7 +15,10 @@ class Config(BaseModel):
                 raise ConfigError(f"Config file {config_file} is empty or invalid")
             
             optional_overrides = {
-                'EXP': 'experiment'
+                'EXP': 'experiment',
+                'EVAL': 'head',
+                'CUSTOM': 'use_custom_head',
+                'POOL': 'pooling_strategy'
             }
             
             for env_var, config_key in optional_overrides.items():
