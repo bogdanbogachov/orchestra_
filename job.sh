@@ -19,4 +19,4 @@ module load gcc arrow
 source venv/bin/activate
 
 # Run the Python script
-python main.py --finetune=True --infer_custom="${C_INF:-False}" --infer_custom="${C_INF:-False}" --evaluate=True
+python main.py --finetune=True --infer_default="${D_INF:-False}" --infer_custom="${C_INF:-False}" --evaluate=True

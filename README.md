@@ -41,11 +41,11 @@ job.sh setup:
 
    ```bash
    export EXP=experiment_name                             
-   export EVAL=eval_head_type
-   export CUSTOM=boolean_head_type
-   export POOL=pooling_strategy
-   export D_INF=boolean
-   export C_INF=boolean
+   export EVAL=eval_head_type # default_head | custom_head
+   export CUSTOM=boolean_head_type # True | False
+   export POOL=pooling_strategy # mean | max | attention
+   export D_INF=boolean # True | False
+   export C_INF=boolean # True | False
    sbatch --job-name="$EXP" --output="${EXP}.out" --error="${EXP}.err" job.sh
    ```
 
