@@ -43,7 +43,7 @@ job.sh setup:
    export EXP=experiment_name                             
    export EVAL=eval_head_type # default_head | custom_head
    export CUSTOM=boolean_head_type # True | False
-   export POOL=pooling_strategy # mean | max | attention
+   export POOL=pooling_strategy # mean | max | attention | last
    export FFT=boolean # True | False
    export D_INF=boolean # True | False
    export C_INF=boolean # True | False
