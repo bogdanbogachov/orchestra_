@@ -18,7 +18,8 @@ class Config(BaseModel):
                 'EXP': 'experiment',
                 'EVAL': 'head',
                 'CUSTOM': 'use_custom_head',
-                'POOL': 'pooling_strategy'
+                'POOL': 'pooling_strategy',
+                'FFT': 'use_fft'
             }
             
             for env_var, config_key in optional_overrides.items():
@@ -31,6 +32,8 @@ class Config(BaseModel):
                         parameters['model'][config_key] = value
                     elif env_var == 'EVAL':
                         parameters['evaluation'][config_key] = value
+                    elif env_var == 'FFT':
+                        parameters['model'][config_key] = value
                     else:
                         parameters[config_key] = value
             
