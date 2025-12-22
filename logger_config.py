@@ -1,5 +1,6 @@
 import logging
 import os
+from datetime import datetime
 from typing import Optional
 
 def setup_logger(
@@ -19,10 +20,12 @@ def setup_logger(
         logging_config = CONFIG.get('logging', {})
         log_dir = log_dir or logging_config.get('log_dir', 'logs')
         experiment_name = CONFIG.get('experiment', 'orchestra')
-        log_file = f'{experiment_name}.log'
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        log_file = f'{experiment_name}_{timestamp}.log'
     except (ImportError, KeyError, AttributeError):
         log_dir = log_dir or 'logs'
-        log_file = log_file or 'orchestra.log'
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        log_file = log_file or f'orchestra_{timestamp}.log'
 
     os.makedirs(log_dir, exist_ok=True)
     log_file_path = os.path.join(log_dir, log_file)

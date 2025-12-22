@@ -5,6 +5,7 @@ from commands.inference.default import run_infer_default
 from commands.inference.custom import run_infer_custom
 from commands.evaluation.evaluate import run_evaluation
 from config import CONFIG
+from logger_config import logger
 
 if __name__ == '__main__':
     parser = build_parser()
@@ -12,8 +13,32 @@ if __name__ == '__main__':
 
     experiment = CONFIG.get('experiment', 'orchestra')
 
-    run_preprocess() if args.preprocess_data else None
-    run_finetune() if args.finetune else None
-    run_infer_default() if args.infer_default else None
-    run_infer_custom() if args.infer_custom else None
-    run_evaluation() if args.evaluate else None
+    if args.preprocess_data:
+        logger.info("=" * 100)
+        logger.info("STEP: PREPROCESS DATA")
+        logger.info("=" * 100)
+        run_preprocess()
+    
+    if args.finetune:
+        logger.info("=" * 100)
+        logger.info("STEP: FINETUNE")
+        logger.info("=" * 100)
+        run_finetune()
+    
+    if args.infer_default:
+        logger.info("=" * 100)
+        logger.info("STEP: INFER DEFAULT")
+        logger.info("=" * 100)
+        run_infer_default()
+    
+    if args.infer_custom:
+        logger.info("=" * 100)
+        logger.info("STEP: INFER CUSTOM")
+        logger.info("=" * 100)
+        run_infer_custom()
+    
+    if args.evaluate:
+        logger.info("=" * 100)
+        logger.info("STEP: EVALUATE")
+        logger.info("=" * 100)
+        run_evaluation()

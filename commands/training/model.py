@@ -55,11 +55,15 @@ def load_model_and_tokenizer():
             device_map=model_config['device_map']
         )
         
+        pooling_strategy = model_config['pooling_strategy']
+        use_fft = model_config['use_fft']
+        logger.info(f"Custom head configuration - Pooling type: {pooling_strategy}, FFT used: {use_fft}")
+        
         classifier = LlamaClassificationHead(
             config=base_model.config,
             num_labels=num_labels,
-            pooling_strategy=model_config['pooling_strategy'],
-            use_fft=model_config['use_fft']
+            pooling_strategy=pooling_strategy,
+            use_fft=use_fft
         ).to(base_model.device)
         
         model = CustomClassificationModel(base_model, classifier)
