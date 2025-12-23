@@ -6,6 +6,7 @@ from sklearn.model_selection import train_test_split
 from config import CONFIG
 from commands.training.dataset import ClassificationDataset
 from commands.training.model import load_model_and_tokenizer, setup_lora
+from commands.training.seed_utils import set_seed
 from logger_config import logger
 
 def load_data(data_path: str):
@@ -24,6 +25,11 @@ def run_finetune():
     paths_config = CONFIG['paths']
     experiment_name = CONFIG.get('experiment', 'orchestra')
     experiments_dir = paths_config['experiments']
+    
+    # Set random seed for reproducibility
+    seed = training_config.get('seed', 42)
+    set_seed(seed)
+    logger.info(f"✓ Set random seed to {seed} for reproducible training")
     
     model, tokenizer, use_custom_head = load_model_and_tokenizer()
     model = setup_lora(model, use_custom_head)
@@ -50,6 +56,7 @@ def run_finetune():
 
     training_args = TrainingArguments(
         output_dir=output_dir,
+        seed=seed,
         num_train_epochs=training_config['num_train_epochs'],
         per_device_train_batch_size=training_config['per_device_train_batch_size'],
         per_device_eval_batch_size=training_config['per_device_eval_batch_size'],
