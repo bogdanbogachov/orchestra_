@@ -22,13 +22,13 @@ paths:
     test: "test_data.json"
 
 lora:
-  r: 8
+  r: 4
   lora_alpha: 16
   target_modules:
     - "q_proj"
-    - "k_proj"
+#    - "k_proj"
     - "v_proj"
-    - "o_proj"
+#    - "o_proj"
   lora_dropout: 0.1
   bias: "none"
 
@@ -37,7 +37,7 @@ training:
   num_train_epochs: 4
   per_device_train_batch_size: 2
   per_device_eval_batch_size: 2
-  learning_rate: 0.0002
+  learning_rate: 0.00005
   logging_steps: 10
   eval_steps: 25
   eval_strategy: "steps"
