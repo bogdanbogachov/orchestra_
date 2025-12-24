@@ -28,9 +28,15 @@ fi
 is_job_running() {
     local job_id=$1
     local status=$(squeue -j "$job_id" -h -o "%T" 2>/dev/null)
+    
+    # If squeue returns nothing, job might not exist or be finished
+    if [[ -z "$status" ]]; then
+        return 1
+    fi
+    
     # Check for both "RUNNING" (full) and "R" (short) formats
-    # Also handle case-insensitive matching
-    status=$(echo "$status" | tr '[:lower:]' '[:upper:]')
+    # Also handle case-insensitive matching and strip whitespace
+    status=$(echo "$status" | tr '[:lower:]' '[:upper:]' | tr -d ' ')
     if [[ "$status" == "RUNNING" || "$status" == "R" ]]; then
         return 0
     else
@@ -93,10 +99,23 @@ wait_for_job_runtime() {
     local waited=0
     while ! is_job_running "$job_id"; do
         # Get current status for logging
-        local current_status=$(squeue -j "$job_id" -h -o "%T" 2>/dev/null || echo "UNKNOWN")
+        local current_status=$(squeue -j "$job_id" -h -o "%T" 2>/dev/null)
+        if [[ -z "$current_status" ]]; then
+            current_status="NOT_FOUND"
+        else
+            current_status=$(echo "$current_status" | tr '[:lower:]' '[:upper:]' | tr -d ' ')
+        fi
+        
         if [[ $((waited % 30)) -eq 0 ]]; then
             echo "  Job $job_id status: $current_status (waited ${waited}s / ${max_wait}s max)"
         fi
+        
+        # If job is not found, it might have finished or failed
+        if [[ "$current_status" == "NOT_FOUND" ]]; then
+            echo "Warning: Job $job_id not found in queue. It may have completed or failed. Proceeding..."
+            return 0
+        fi
+        
         sleep 5
         waited=$((waited + 5))
         if [[ $waited -ge $max_wait ]]; then
