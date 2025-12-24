@@ -94,9 +94,12 @@ wait_for_job_runtime() {
     
     echo "Waiting for job $job_id to start..."
     
+    # Give the job a moment to appear in the queue
+    sleep 2
+    
     # Wait for job to start (max 10 minutes)
     local max_wait=600
-    local waited=0
+    local waited=2
     while ! is_job_running "$job_id"; do
         # Get current status for logging
         local current_status=$(squeue -j "$job_id" -h -o "%T" 2>/dev/null)
@@ -106,13 +109,15 @@ wait_for_job_runtime() {
             current_status=$(echo "$current_status" | tr '[:lower:]' '[:upper:]' | tr -d ' ')
         fi
         
-        if [[ $((waited % 30)) -eq 0 ]]; then
+        # Only log status after initial wait and then every 30 seconds
+        if [[ $waited -ge 5 && $((waited % 30)) -eq 0 ]]; then
             echo "  Job $job_id status: $current_status (waited ${waited}s / ${max_wait}s max)"
         fi
         
-        # If job is not found, it might have finished or failed
-        if [[ "$current_status" == "NOT_FOUND" ]]; then
-            echo "Warning: Job $job_id not found in queue. It may have completed or failed. Proceeding..."
+        # If job is not found after initial wait period, it might have finished or failed
+        # But give it at least 10 seconds before assuming it's gone
+        if [[ "$current_status" == "NOT_FOUND" && $waited -ge 10 ]]; then
+            echo "Warning: Job $job_id not found in queue after ${waited}s. It may have completed or failed. Proceeding..."
             return 0
         fi
         
@@ -186,7 +191,14 @@ submit_job() {
     
     # Submit the job
     local output=$(sbatch --job-name="$EXP" --output="_err_out/${EXP}.out" --error="_err_out/${EXP}.err" job.sh 2>&1)
-    local job_id=$(echo "$output" | grep -oP '\d+' | head -1)
+    
+    # Extract job ID - look for "Submitted batch job" pattern first
+    local job_id=$(echo "$output" | grep -oE 'Submitted batch job [0-9]+' | grep -oE '[0-9]+' | head -1)
+    
+    # If that doesn't work, try extracting any number from the output
+    if [[ -z "$job_id" ]]; then
+        job_id=$(echo "$output" | grep -oE '[0-9]+' | head -1)
+    fi
     
     if [[ -z "$job_id" ]]; then
         echo "Error: Failed to submit job. Output: $output"
@@ -257,8 +269,8 @@ for exp_config in "${EXPERIMENTS[@]}"; do
     
     # Wait for this job to start and run for 1 minute (unless it's the last one)
     # Check if there are more experiments after this one
-    local is_last=true
-    local found_current=false
+    is_last=true
+    found_current=false
     for check_config in "${EXPERIMENTS[@]}"; do
         if [[ "$found_current" == true ]]; then
             is_last=false
