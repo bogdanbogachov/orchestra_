@@ -40,14 +40,14 @@ job.sh setup:
 - Choose appropriate resources (for llama 2 fine-tuning GPU partitioning is desired)
 
    ```bash
-   export EXP=experiment_name                             
+   export EXP=experiment_name
    export EVAL=eval_head_type # default_head | custom_head
    export CUSTOM=boolean_head_type # True | False
    export POOL=pooling_strategy # mean | max | attention | last
    export FFT=boolean # True | False
    export D_INF=boolean # True | False
    export C_INF=boolean # True | False
-   sbatch --job-name="$EXP" --output="${EXP}.out" --error="${EXP}.err" job.sh
+   sbatch --job-name="$EXP" --output="_err_out/${EXP}.out" --error="_err_out/${EXP}.err" job.sh
    ```
 
 **Important**: Environment variables override respective variables in `config.yaml`.
