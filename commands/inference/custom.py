@@ -39,6 +39,10 @@ def _load_custom_model_tokenizer_and_head(adapter_path: Optional[str] = None):
         device_map=model_config["device_map"],
     )
 
+    # Set pad_token_id to match tokenizer for consistency
+    if base_model.config.pad_token_id is None:
+        base_model.config.pad_token_id = tokenizer.pad_token_id
+
     classifier = None
     if os.path.exists(adapter_path):
         logger.info(f"Loading LoRA adapters from {adapter_path}")
@@ -83,8 +87,8 @@ def _predict_custom_single(
 
     return classifier(
         hidden_states=hidden_states,
-        # attention_mask=inputs.get("attention_mask"),
-        attention_mask=None,
+        attention_mask=inputs.get("attention_mask"),
+        # attention_mask=None,
         labels=labels,
     )
 

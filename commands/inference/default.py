@@ -39,6 +39,10 @@ def _load_default_model_and_tokenizer(adapter_path: Optional[str] = None):
         device_map=model_config["device_map"],
     )
 
+    # Set pad_token_id to match tokenizer so default head can find last non-padding token
+    if model.config.pad_token_id is None:
+        model.config.pad_token_id = tokenizer.pad_token_id
+
     if os.path.exists(adapter_path):
         logger.info(f"Loading LoRA adapters from {adapter_path}")
         model = PeftModel.from_pretrained(model, adapter_path)
