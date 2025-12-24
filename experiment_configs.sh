@@ -16,8 +16,8 @@
 # Experiment configurations - 9 experiments
 
 EXPERIMENTS=(
-    "35_1_default_test default_head False mean False True False"
-    "35_1_default_test default_head False mean False True False"
+    "35_1_default_test_1 default_head False mean False True False"
+    "35_1_default_test_2 default_head False mean False True False"
 #    "35_1_default_503 default_head False mean False True False"
 #    "35_1_default_504 default_head False mean False True False"
 #    "35_1_default_505 default_head False mean False True False"
