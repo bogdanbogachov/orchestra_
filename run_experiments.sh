@@ -24,6 +24,19 @@ else
     CONFIG_FILE="$1"
 fi
 
+# Function to check if a job exists in queue (any state)
+job_exists_in_queue() {
+    local job_id=$1
+    local status=$(squeue -j "$job_id" -h -o "%T" 2>/dev/null)
+    
+    # If squeue returns something, job exists
+    if [[ -n "$status" ]]; then
+        return 0
+    else
+        return 1
+    fi
+}
+
 # Function to check if a job is running
 is_job_running() {
     local job_id=$1
@@ -35,8 +48,8 @@ is_job_running() {
     fi
     
     # Check for both "RUNNING" (full) and "R" (short) formats
-    # Also handle case-insensitive matching and strip whitespace
-    status=$(echo "$status" | tr '[:lower:]' '[:upper:]' | tr -d ' ')
+    # Also handle case-insensitive matching and strip all whitespace (including newlines)
+    status=$(echo "$status" | tr '[:lower:]' '[:upper:]' | tr -d '[:space:]')
     if [[ "$status" == "RUNNING" || "$status" == "R" ]]; then
         return 0
     else
@@ -92,21 +105,36 @@ wait_for_job_runtime() {
     local wait_minutes=${2:-1}
     local wait_seconds=$((wait_minutes * 60))
     
-    echo "Waiting for job $job_id to start..."
+    echo "Waiting for job $job_id to start..." >&2
     
     # Give the job a moment to appear in the queue
     sleep 2
     
     # Wait for job to start (max 10 minutes)
+    # We wait for it to be RUNNING, but PENDING is also acceptable (job exists)
     local max_wait=600
     local waited=2
     while ! is_job_running "$job_id"; do
         # Get current status for logging
         local current_status=$(squeue -j "$job_id" -h -o "%T" 2>/dev/null)
+        local full_info=$(squeue -j "$job_id" -h -o "%i %T %R" 2>/dev/null)
+        
         if [[ -z "$current_status" ]]; then
             current_status="NOT_FOUND"
+            # Try checking with sacct to see if job completed/failed
+            local sacct_status=$(sacct -j "$job_id" -n -o State --noheader 2>/dev/null | head -1 | tr -d '[:space:]')
+            if [[ -n "$sacct_status" ]]; then
+                echo "DEBUG: Job $job_id found in sacct with state: $sacct_status" >&2
+                current_status="COMPLETED_OR_FAILED"
+            fi
         else
-            current_status=$(echo "$current_status" | tr '[:lower:]' '[:upper:]' | tr -d ' ')
+            current_status=$(echo "$current_status" | tr '[:lower:]' '[:upper:]' | tr -d '[:space:]')
+            echo "DEBUG: Job $job_id status: $current_status (full info: $full_info)" >&2
+            # If job is PENDING, CONFIGURING, etc., that's fine - it exists, just wait
+            if [[ "$current_status" == "PENDING" || "$current_status" == "PD" || "$current_status" == "CONFIGURING" || "$current_status" == "CF" ]]; then
+                # Job exists, just not running yet - continue waiting
+                :
+            fi
         fi
         
         # Only log status after initial wait and then every 30 seconds
@@ -114,10 +142,22 @@ wait_for_job_runtime() {
             echo "  Job $job_id status: $current_status (waited ${waited}s / ${max_wait}s max)"
         fi
         
-        # If job is not found after initial wait period, it might have finished or failed
+        # If job is not found after initial wait period, check if it completed/failed
         # But give it at least 10 seconds before assuming it's gone
         if [[ "$current_status" == "NOT_FOUND" && $waited -ge 10 ]]; then
-            echo "Warning: Job $job_id not found in queue after ${waited}s. It may have completed or failed. Proceeding..."
+            # Double-check with sacct
+            local final_check=$(sacct -j "$job_id" -n -o State,ExitCode --noheader 2>/dev/null | head -1)
+            if [[ -n "$final_check" ]]; then
+                echo "Warning: Job $job_id not in queue but found in sacct: $final_check. Proceeding..." >&2
+            else
+                echo "Warning: Job $job_id not found in queue or sacct after ${waited}s. It may have been rejected. Proceeding..." >&2
+            fi
+            return 0
+        fi
+        
+        # If job completed or failed, proceed
+        if [[ "$current_status" == "COMPLETED_OR_FAILED" ]]; then
+            echo "Job $job_id has completed or failed. Proceeding..." >&2
             return 0
         fi
         
@@ -178,19 +218,23 @@ submit_job() {
     export D_INF="$d_inf"
     export C_INF="$c_inf"
     
-    echo "=========================================="
-    echo "Submitting job with configuration:"
-    echo "  EXP=$EXP"
-    echo "  EVAL=$EVAL"
-    echo "  CUSTOM=$CUSTOM"
-    echo "  POOL=$POOL"
-    echo "  FFT=$FFT"
-    echo "  D_INF=$D_INF"
-    echo "  C_INF=$C_INF"
-    echo "=========================================="
+    # Send informational messages to stderr so they don't get captured
+    echo "==========================================" >&2
+    echo "Submitting job with configuration:" >&2
+    echo "  EXP=$EXP" >&2
+    echo "  EVAL=$EVAL" >&2
+    echo "  CUSTOM=$CUSTOM" >&2
+    echo "  POOL=$POOL" >&2
+    echo "  FFT=$FFT" >&2
+    echo "  D_INF=$D_INF" >&2
+    echo "  C_INF=$C_INF" >&2
+    echo "==========================================" >&2
     
     # Submit the job
     local output=$(sbatch --job-name="$EXP" --output="_err_out/${EXP}.out" --error="_err_out/${EXP}.err" job.sh 2>&1)
+    
+    # Debug: show raw output
+    echo "DEBUG: sbatch output: $output" >&2
     
     # Extract job ID - look for "Submitted batch job" pattern first
     local job_id=$(echo "$output" | grep -oE 'Submitted batch job [0-9]+' | grep -oE '[0-9]+' | head -1)
@@ -201,12 +245,23 @@ submit_job() {
     fi
     
     if [[ -z "$job_id" ]]; then
-        echo "Error: Failed to submit job. Output: $output"
+        echo "Error: Failed to submit job. Output: $output" >&2
         return 1
     fi
     
-    echo "Submitted job $job_id: $EXP"
-    echo "$job_id"
+    # Verify job exists in queue immediately after submission
+    sleep 1
+    local verify_status=$(squeue -j "$job_id" -h -o "%T" 2>/dev/null)
+    echo "DEBUG: Job $job_id verification status: '${verify_status}'" >&2
+    
+    if [[ -z "$verify_status" ]]; then
+        # Try checking with sacct as well
+        local sacct_check=$(sacct -j "$job_id" -n -o State --noheader 2>/dev/null | head -1 | tr -d '[:space:]')
+        echo "DEBUG: Job $job_id sacct check: '${sacct_check}'" >&2
+    fi
+    
+    echo "Submitted job $job_id: $EXP" >&2
+    echo "$job_id"  # This is the only thing that goes to stdout
 }
 
 # ============================================================================
