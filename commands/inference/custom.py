@@ -83,7 +83,8 @@ def _predict_custom_single(
 
     return classifier(
         hidden_states=hidden_states,
-        attention_mask=inputs.get("attention_mask"),
+        # attention_mask=inputs.get("attention_mask"),
+        attention_mask=None,
         labels=labels,
     )
 
