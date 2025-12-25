@@ -24,6 +24,7 @@ class CustomClassificationModel(torch.nn.Module):
         result = self.classifier(
             hidden_states=hidden_states,
             attention_mask=attention_mask,
+            input_ids=input_ids,  # Pass input_ids for pad_token_id logic in "last" pooling
             labels=labels
         )
 

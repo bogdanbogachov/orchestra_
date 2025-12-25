@@ -88,7 +88,7 @@ def _predict_custom_single(
     return classifier(
         hidden_states=hidden_states,
         attention_mask=inputs.get("attention_mask"),
-        # attention_mask=None,
+        input_ids=inputs.get("input_ids"),  # Pass input_ids for pad_token_id logic
         labels=labels,
     )
 
