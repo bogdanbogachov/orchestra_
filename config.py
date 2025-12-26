@@ -19,14 +19,15 @@ class Config(BaseModel):
                 'EVAL': 'head',
                 'CUSTOM': 'use_custom_head',
                 'POOL': 'pooling_strategy',
-                'FFT': 'use_fft'
+                'FFT': 'use_fft',
+                'DSTYLE': 'use_default_style'
             }
             
             for env_var, config_key in optional_overrides.items():
                 value = os.getenv(env_var)
                 if value:
-                    # Convert boolean strings to actual booleans for CUSTOM
-                    if env_var == 'CUSTOM' and value.lower() in ('true', 'false'):
+                    # Convert boolean strings to actual booleans for CUSTOM and DSTYLE
+                    if env_var in ('CUSTOM', 'DSTYLE') and value.lower() in ('true', 'false'):
                         parameters['model'][config_key] = value.lower() == 'true'
                     elif env_var == 'POOL':
                         parameters['model'][config_key] = value

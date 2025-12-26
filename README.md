@@ -45,6 +45,7 @@ job.sh setup:
    export CUSTOM=boolean_head_type # True | False
    export POOL=pooling_strategy # mean | max | attention | last
    export FFT=boolean # True | False
+   export DSTYLE=boolean # True | False (use default head style: apply linear to all tokens first, then select last token)
    export D_INF=boolean # True | False
    export C_INF=boolean # True | False
    sbatch --job-name="$EXP" --output="_err_out/${EXP}.out" --error="_err_out/${EXP}.err" job.sh
@@ -76,9 +77,10 @@ Edit `experiment_configs.sh` to define your experiments. Each experiment is defi
 **Example configuration:**
 ```bash
 EXPERIMENTS=(
-    "exp1 custom_head True mean True False False"
-    "exp2 custom_head True max False False False"
-    "exp3 default_head False mean False False False"
+    "exp1 custom_head True mean True False False False"
+    "exp2 custom_head True max False False False False"
+    "exp3 custom_head True last False True False False"
+    "exp4 default_head False mean False False False False"
 )
 ```
 
