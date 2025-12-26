@@ -5,12 +5,13 @@ from transformers.models.llama.configuration_llama import LlamaConfig
 
 
 class LlamaClassificationHead(nn.Module):
-    def __init__(self, config: LlamaConfig, num_labels: int, pooling_strategy: str = "mean", use_fft: bool = False):
+    def __init__(self, config: LlamaConfig, num_labels: int, pooling_strategy: str = "mean", use_fft: bool = False, use_default_style: bool = False):
         super().__init__()
         self.config = config
         self.num_labels = num_labels
         self.pooling_strategy = pooling_strategy
         self.use_fft = use_fft
+        self.use_default_style = use_default_style
         self.hidden_size = config.hidden_size
         self.classifier = nn.Linear(self.hidden_size, self.num_labels, bias=False)
         if pooling_strategy == "attention":
@@ -90,8 +91,28 @@ class LlamaClassificationHead(nn.Module):
         if self.use_fft:
             hidden_states = self.apply_fft_filter(hidden_states)
         
-        pooled = self.pool_hidden_states(hidden_states, attention_mask, input_ids)
-        logits = self.classifier(pooled)
+        if self.use_default_style:
+            # Default head style: apply linear layer to all tokens first, then select last token's logits
+            # This replicates AutoModelForSequenceClassification behavior
+            logits_all_tokens = self.classifier(hidden_states)  # [batch, seq_len, num_labels]
+            
+            # Select last non-padding token's logits (matching default head behavior)
+            if input_ids is not None and self.config.pad_token_id is not None:
+                batch_size = input_ids.shape[0]
+                non_pad_mask = (input_ids != self.config.pad_token_id).to(hidden_states.device, torch.int32)
+                token_indices = torch.arange(input_ids.shape[-1], device=hidden_states.device, dtype=torch.int32)
+                last_non_pad_token = (token_indices * non_pad_mask).argmax(-1)
+                batch_indices = torch.arange(batch_size, device=hidden_states.device)
+                logits = logits_all_tokens[batch_indices, last_non_pad_token]  # [batch, num_labels]
+            else:
+                # Fallback to last position if pad_token_id not available
+                logits = logits_all_tokens[:, -1, :]  # [batch, num_labels]
+        else:
+            # Custom head style: pool first, then apply linear layer
+            pooled = self.pool_hidden_states(hidden_states, attention_mask, input_ids)
+            logits = self.classifier(pooled)  # [batch, num_labels]
+        
+        # Softmax identical to default head: torch.nn.functional.softmax(logits, dim=-1)
         probs = torch.nn.functional.softmax(logits, dim=-1)
         loss = None
         if labels is not None:
