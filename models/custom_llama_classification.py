@@ -93,20 +93,29 @@ class LlamaClassificationHead(nn.Module):
         
         if self.use_default_style:
             # Default head style: apply linear layer to all tokens first, then select last token's logits
-            # This replicates AutoModelForSequenceClassification behavior
-            logits_all_tokens = self.classifier(hidden_states)  # [batch, seq_len, num_labels]
+            # This replicates AutoModelForSequenceClassification behavior EXACTLY
+            logits = self.classifier(hidden_states)  # [batch, seq_len, num_labels]
             
-            # Select last non-padding token's logits (matching default head behavior)
-            if input_ids is not None and self.config.pad_token_id is not None:
+            # Select last non-padding token's logits (matching default head behavior EXACTLY)
+            if input_ids is not None:
                 batch_size = input_ids.shape[0]
-                non_pad_mask = (input_ids != self.config.pad_token_id).to(hidden_states.device, torch.int32)
-                token_indices = torch.arange(input_ids.shape[-1], device=hidden_states.device, dtype=torch.int32)
-                last_non_pad_token = (token_indices * non_pad_mask).argmax(-1)
-                batch_indices = torch.arange(batch_size, device=hidden_states.device)
-                logits = logits_all_tokens[batch_indices, last_non_pad_token]  # [batch, num_labels]
             else:
-                # Fallback to last position if pad_token_id not available
-                logits = logits_all_tokens[:, -1, :]  # [batch, num_labels]
+                batch_size = hidden_states.shape[0]
+            
+            if self.config.pad_token_id is None and batch_size != 1:
+                raise ValueError("Cannot handle batch sizes > 1 if no padding token is defined.")
+            if self.config.pad_token_id is None:
+                last_non_pad_token = -1
+            elif input_ids is not None:
+                # To handle both left- and right- padding, we take the rightmost token that is not equal to pad_token_id
+                non_pad_mask = (input_ids != self.config.pad_token_id).to(logits.device, torch.int32)
+                token_indices = torch.arange(input_ids.shape[-1], device=logits.device, dtype=torch.int32)
+                last_non_pad_token = (token_indices * non_pad_mask).argmax(-1)
+            else:
+                last_non_pad_token = -1
+            
+            # Use EXACT same indexing as default head
+            logits = logits[torch.arange(batch_size, device=logits.device), last_non_pad_token]  # [batch, num_labels]
         else:
             # Custom head style: pool first, then apply linear layer
             pooled = self.pool_hidden_states(hidden_states, attention_mask, input_ids)
