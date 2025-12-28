@@ -58,7 +58,15 @@ class LlamaClassificationHead(nn.Module):
                 pooled = masked_states.max(dim=1)[0]
             else:
                 pooled = hidden_states.max(dim=1)[0]
-        
+
+        elif self.pooling_strategy == "attention":
+            attention_scores = self.attention_weights(hidden_states)
+            if attention_mask is not None:
+                mask = attention_mask.unsqueeze(-1).float()
+                attention_scores = attention_scores + (1 - mask) * (-1e9)
+            attention_weights = torch.softmax(attention_scores, dim=1)
+            pooled = (hidden_states * attention_weights).sum(dim=1)
+
         elif self.pooling_strategy == "last":
             # Match default head behavior: use pad_token_id to find last non-padding token
             if input_ids is not None and self.config.pad_token_id is not None:
@@ -74,14 +82,7 @@ class LlamaClassificationHead(nn.Module):
                 pooled = hidden_states[batch_indices, seq_lengths]
             else:
                 pooled = hidden_states[:, -1, :]
-        
-        elif self.pooling_strategy == "attention":
-            attention_scores = self.attention_weights(hidden_states)
-            if attention_mask is not None:
-                mask = attention_mask.unsqueeze(-1).float()
-                attention_scores = attention_scores + (1 - mask) * (-1e9)
-            attention_weights = torch.softmax(attention_scores, dim=1)
-            pooled = (hidden_states * attention_weights).sum(dim=1)
+
         else:
             raise ValueError(f"Unknown pooling strategy: {self.pooling_strategy}")
         

@@ -55,6 +55,9 @@ def load_model_and_tokenizer():
             torch_dtype=torch_dtype,
             device_map=model_config['device_map']
         )
+
+        if base_model.config.pad_token_id is None:
+            base_model.config.pad_token_id = tokenizer.pad_token_id
         
         pooling_strategy = model_config['pooling_strategy']
         use_fft = model_config['use_fft']
