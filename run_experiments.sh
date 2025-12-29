@@ -206,9 +206,8 @@ submit_job() {
     local custom=$3
     local pool=$4
     local fft=$5
-    local dstyle=$6
-    local d_inf=$7
-    local c_inf=$8
+    local d_inf=$6
+    local c_inf=$7
     
     # Export environment variables
     export EXP="$exp_name"
@@ -216,7 +215,6 @@ submit_job() {
     export CUSTOM="$custom"
     export POOL="$pool"
     export FFT="$fft"
-    export DSTYLE="$dstyle"
     export D_INF="$d_inf"
     export C_INF="$c_inf"
     
@@ -228,7 +226,6 @@ submit_job() {
     echo "  CUSTOM=$CUSTOM" >&2
     echo "  POOL=$POOL" >&2
     echo "  FFT=$FFT" >&2
-    echo "  DSTYLE=$DSTYLE" >&2
     echo "  D_INF=$D_INF" >&2
     echo "  C_INF=$C_INF" >&2
     echo "==========================================" >&2
@@ -271,14 +268,14 @@ submit_job() {
 # CONFIGURATION: Define your experiment configurations here
 # ============================================================================
 # Format: Each line represents one experiment with the following fields:
-# EXP_NAME EVAL_HEAD CUSTOM POOL FFT DSTYLE D_INF C_INF
+# EXP_NAME EVAL_HEAD CUSTOM POOL FFT D_INF C_INF
 # 
 # Option 1: Define experiments directly here (uncomment and modify):
 # EXPERIMENTS=(
-#     "exp1 custom_head True mean True False False False"
-#     "exp2 custom_head True max False False False False"
-#     "exp3 custom_head True last False True False False"
-#     "exp4 default_head False mean False False False False"
+#     "exp1 custom_head True mean True False False"
+#     "exp2 custom_head True max False False False"
+#     "exp3 custom_head True last False False False"
+#     "exp4 default_head False mean False False False"
 # )
 
 # Option 2: Source from external config file
@@ -314,20 +311,11 @@ LAST_JOB_ID=""
 # Process each experiment
 for exp_config in "${EXPERIMENTS[@]}"; do
     # Parse configuration
-    # Count fields to handle backward compatibility (old format has 7 fields, new has 8)
-    local field_count=$(echo "$exp_config" | wc -w)
-
-    if [[ $field_count -eq 7 ]]; then
-        # Old format (without DSTYLE): EXP_NAME EVAL_HEAD CUSTOM POOL FFT D_INF C_INF
-        read -r exp_name eval_head custom pool fft d_inf c_inf <<< "$exp_config"
-        dstyle="False"  # Default value for DSTYLE in old format
-    else
-        # New format (with DSTYLE): EXP_NAME EVAL_HEAD CUSTOM POOL FFT DSTYLE D_INF C_INF
-        read -r exp_name eval_head custom pool fft dstyle d_inf c_inf <<< "$exp_config"
-    fi
+    # Format: EXP_NAME EVAL_HEAD CUSTOM POOL FFT D_INF C_INF
+    read -r exp_name eval_head custom pool fft d_inf c_inf <<< "$exp_config"
 
     # Submit the job
-    job_id=$(submit_job "$exp_name" "$eval_head" "$custom" "$pool" "$fft" "$dstyle" "$d_inf" "$c_inf")
+    job_id=$(submit_job "$exp_name" "$eval_head" "$custom" "$pool" "$fft" "$d_inf" "$c_inf")
     
     if [[ -z "$job_id" ]]; then
         echo "Failed to submit job for $exp_name. Skipping..."

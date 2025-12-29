@@ -24,7 +24,6 @@ class CustomClassificationModel(torch.nn.Module):
         result = self.classifier(
             hidden_states=hidden_states,
             attention_mask=attention_mask,
-            input_ids=input_ids,  # Pass input_ids for pad_token_id logic in "last" pooling
             labels=labels
         )
 
@@ -70,15 +69,13 @@ def load_model_and_tokenizer():
         
         pooling_strategy = model_config['pooling_strategy']
         use_fft = model_config['use_fft']
-        use_default_style = model_config.get('use_default_style', False)
-        logger.info(f"Custom head configuration - Pooling type: {pooling_strategy}, FFT used: {use_fft}, Default style: {use_default_style}")
+        logger.info(f"Custom head configuration - Pooling type: {pooling_strategy}, FFT used: {use_fft}")
         
         classifier = LlamaClassificationHead(
             config=base_model.config,
             num_labels=num_labels,
             pooling_strategy=pooling_strategy,
-            use_fft=use_fft,
-            use_default_style=use_default_style
+            use_fft=use_fft
         )
         
         # Determine target device - handle device_map='auto' case

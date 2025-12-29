@@ -54,14 +54,12 @@ def _load_custom_model_tokenizer_and_head(adapter_path: Optional[str] = None):
             classifier_state = torch.load(classifier_path, map_location=base_model.device)
             pooling_strategy = model_config["pooling_strategy"]
             use_fft = model_config["use_fft"]
-            use_default_style = model_config.get("use_default_style", False)
-            logger.info(f"Custom head configuration - Pooling type: {pooling_strategy}, FFT used: {use_fft}, Default style: {use_default_style}")
+            logger.info(f"Custom head configuration - Pooling type: {pooling_strategy}, FFT used: {use_fft}")
             classifier = LlamaClassificationHead(
                 config=base_model.config,
                 num_labels=model_config["num_labels"],
                 pooling_strategy=pooling_strategy,
                 use_fft=use_fft,
-                use_default_style=use_default_style,
             ).to(base_model.device)
             classifier.load_state_dict(classifier_state)
         else:
@@ -88,7 +86,6 @@ def _predict_custom_single(
     return classifier(
         hidden_states=hidden_states,
         attention_mask=inputs.get("attention_mask"),
-        input_ids=inputs.get("input_ids"),  # Pass input_ids for pad_token_id logic
         labels=labels,
     )
 

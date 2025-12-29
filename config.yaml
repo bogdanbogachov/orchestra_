@@ -7,7 +7,6 @@ model:
   use_custom_head: true
   pooling_strategy: "mean"
   use_fft: true
-  use_default_style: false  # If true, applies linear layer to all tokens first (like default head), then selects last token
 
   num_labels: 35
   pad_token: "<|reserved_special_token_15|>"
