@@ -69,14 +69,14 @@ class LlamaClassificationHead(nn.Module):
 
         elif self.pooling_strategy == "last":
             # Match default head behavior: use pad_token_id to find last non-padding token
-            if input_ids is not None and self.config.pad_token_id is not None:
-                batch_size = input_ids.shape[0]
-                non_pad_mask = (input_ids != self.config.pad_token_id).to(hidden_states.device, torch.int32)
-                token_indices = torch.arange(input_ids.shape[-1], device=hidden_states.device, dtype=torch.int32)
-                last_non_pad_token = (token_indices * non_pad_mask).argmax(-1)
-                batch_indices = torch.arange(batch_size, device=hidden_states.device)
-                pooled = hidden_states[batch_indices, last_non_pad_token]
-            elif attention_mask is not None:
+            # if input_ids is not None and self.config.pad_token_id is not None:
+            #     batch_size = input_ids.shape[0]
+            #     non_pad_mask = (input_ids != self.config.pad_token_id).to(hidden_states.device, torch.int32)
+            #     token_indices = torch.arange(input_ids.shape[-1], device=hidden_states.device, dtype=torch.int32)
+            #     last_non_pad_token = (token_indices * non_pad_mask).argmax(-1)
+            #     batch_indices = torch.arange(batch_size, device=hidden_states.device)
+            #     pooled = hidden_states[batch_indices, last_non_pad_token]
+            if attention_mask is not None:
                 seq_lengths = attention_mask.sum(dim=1) - 1
                 batch_indices = torch.arange(hidden_states.size(0), device=hidden_states.device)
                 pooled = hidden_states[batch_indices, seq_lengths]
@@ -128,7 +128,7 @@ class LlamaClassificationHead(nn.Module):
         if labels is not None:
             loss_fn = nn.CrossEntropyLoss()
             loss = loss_fn(logits, labels)
-        
+
         return {
             'logits': logits,
             'probs': probs,
