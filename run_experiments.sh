@@ -316,7 +316,7 @@ for exp_config in "${EXPERIMENTS[@]}"; do
     # Parse configuration
     # Count fields to handle backward compatibility (old format has 7 fields, new has 8)
     local field_count=$(echo "$exp_config" | wc -w)
-    
+
     if [[ $field_count -eq 7 ]]; then
         # Old format (without DSTYLE): EXP_NAME EVAL_HEAD CUSTOM POOL FFT D_INF C_INF
         read -r exp_name eval_head custom pool fft d_inf c_inf <<< "$exp_config"
@@ -325,7 +325,7 @@ for exp_config in "${EXPERIMENTS[@]}"; do
         # New format (with DSTYLE): EXP_NAME EVAL_HEAD CUSTOM POOL FFT DSTYLE D_INF C_INF
         read -r exp_name eval_head custom pool fft dstyle d_inf c_inf <<< "$exp_config"
     fi
-    
+
     # Submit the job
     job_id=$(submit_job "$exp_name" "$eval_head" "$custom" "$pool" "$fft" "$dstyle" "$d_inf" "$c_inf")
     

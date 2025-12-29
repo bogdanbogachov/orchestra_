@@ -49,13 +49,22 @@ def load_model_and_tokenizer():
     dtype_map = {"float32": torch.float32, "float16": torch.float16, "bfloat16": torch.bfloat16}
     torch_dtype = dtype_map.get(model_config['torch_dtype'], torch.float32)
     
+    # ALWAYS load the default model first to get its score layer weights
+    # This ensures we get the exact same initialization for both custom and default heads
+    default_model = AutoModelForSequenceClassification.from_pretrained(
+        model_path,
+        num_labels=num_labels,
+        torch_dtype=torch_dtype,
+        device_map=model_config['device_map']
+    )
+    
+    if default_model.config.pad_token_id is None:
+        default_model.config.pad_token_id = tokenizer.pad_token_id
+    
     if use_custom_head:
-        base_model = AutoModel.from_pretrained(
-            model_path,
-            torch_dtype=torch_dtype,
-            device_map=model_config['device_map']
-        )
-
+        # Extract the base model from the default model (without classification head)
+        base_model = default_model.model
+        
         if base_model.config.pad_token_id is None:
             base_model.config.pad_token_id = tokenizer.pad_token_id
         
@@ -70,19 +79,42 @@ def load_model_and_tokenizer():
             pooling_strategy=pooling_strategy,
             use_fft=use_fft,
             use_default_style=use_default_style
-        ).to(base_model.device)
+        )
+        
+        # Determine target device - handle device_map='auto' case
+        if hasattr(base_model, 'device'):
+            target_device = base_model.device
+        elif hasattr(base_model, 'hf_device_map'):
+            # For device_map='auto', get the device of the first parameter
+            first_param = next(base_model.parameters())
+            target_device = first_param.device
+        else:
+            # Fallback to CPU
+            target_device = torch.device('cpu')
+        
+        # Move classifier to target device BEFORE copying weights
+        classifier = classifier.to(target_device)
+        
+        # Copy weights from the actual default model's score layer
+        # This ensures we use the exact same weights that the default head uses
+        with torch.no_grad():
+            # Get target dtype from classifier
+            target_dtype = classifier.classifier.weight.dtype
+            # Get source weight from the actual default model (same one that would be used for default head)
+            source_weight = default_model.score.weight.data.to(device=target_device, dtype=target_dtype)
+            # Copy the weight
+            classifier.classifier.weight.data.copy_(source_weight)
+        
+        logger.info("✓ Initialized custom classifier weights to match default head's score layer")
         
         model = CustomClassificationModel(base_model, classifier)
         logger.info(f"✓ Loaded base model with custom classification head")
+        
+        # Clean up the default model (we only needed it for the weights and base model)
+        del default_model
     else:
-        model = AutoModelForSequenceClassification.from_pretrained(
-            model_path,
-            num_labels=num_labels,
-            torch_dtype=torch_dtype,
-            device_map=model_config['device_map']
-        )
-        if model.config.pad_token_id is None:
-            model.config.pad_token_id = tokenizer.pad_token_id
+        # Use the default model directly
+        model = default_model
         logger.info("✓ Loaded model with default classification head")
 
     return model, tokenizer, use_custom_head

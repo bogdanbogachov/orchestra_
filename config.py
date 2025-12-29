@@ -26,15 +26,13 @@ class Config(BaseModel):
             for env_var, config_key in optional_overrides.items():
                 value = os.getenv(env_var)
                 if value:
-                    # Convert boolean strings to actual booleans for CUSTOM and DSTYLE
-                    if env_var in ('CUSTOM', 'DSTYLE') and value.lower() in ('true', 'false'):
+                    # Convert boolean strings to actual booleans for CUSTOM, DSTYLE, and FFT
+                    if env_var in ('CUSTOM', 'DSTYLE', 'FFT') and value.lower() in ('true', 'false'):
                         parameters['model'][config_key] = value.lower() == 'true'
                     elif env_var == 'POOL':
                         parameters['model'][config_key] = value
                     elif env_var == 'EVAL':
                         parameters['evaluation'][config_key] = value
-                    elif env_var == 'FFT':
-                        parameters['model'][config_key] = value
                     else:
                         parameters[config_key] = value
             

@@ -17,12 +17,12 @@
 # Experiment configurations - 9 experiments
 
 EXPERIMENTS=(
-    "35_1_default_213 default_head False mean False False True False"
+    "35_1_default_223 default_head False mean False False True False"
 #    "35_1_default_602 default_head False mean False False True False"
 #    "35_1_default_603 default_head False mean False False True False"
 #    "35_1_default_604 default_head False mean False False True False"
 #    "35_1_default_605 default_head False mean False False True False"
-    "35_1_custom_last_213 custom_head True last False True False True"
+    "35_1_custom_last_223 custom_head True last False True False True"
 #    "35_1_custom_last_602 custom_head True last False False True"
 #    "35_1_custom_last_603 custom_head True last False False True"
 #    "35_1_custom_last_604 custom_head True last False False True"
