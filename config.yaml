@@ -40,9 +40,9 @@ training:
   per_device_eval_batch_size: 4
   effective_batch_size: 16  # Effective batch size = per_device_train_batch_size * gradient_accumulation_steps
   gradient_accumulation_steps: null  # Auto-calculated from effective_batch_size if null
-  learning_rate: 0.00005
+  learning_rate: 0.00002
   # Learning rate schedule
-  lr_scheduler_type: "cosine"  # Options: "linear", "cosine", "cosine_with_restarts", "polynomial", "constant"
+  lr_scheduler_type: "linear"  # Options: "linear", "cosine", "cosine_with_restarts", "polynomial", "constant"
   warmup_steps: null  # If null, warmup_ratio will be used
   warmup_ratio: 0.1  # 10% of training steps for warmup
   # Early stopping
