@@ -70,7 +70,9 @@ def run_finetune():
     
     # Set save_steps to match eval_steps if not specified
     eval_steps = training_config.get('eval_steps', 25)
-    save_steps = training_config.get('save_steps', eval_steps)
+    save_steps = training_config.get('save_steps', None)
+    if save_steps is None:
+        save_steps = eval_steps
     
     training_args = TrainingArguments(
         output_dir=output_dir,
