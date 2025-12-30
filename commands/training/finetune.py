@@ -74,30 +74,36 @@ def run_finetune():
     if save_steps is None:
         save_steps = eval_steps
     
-    training_args = TrainingArguments(
-        output_dir=output_dir,
-        seed=seed,
-        num_train_epochs=training_config.get('num_train_epochs', 20),  # Max epochs for early stopping
-        per_device_train_batch_size=per_device_batch_size,
-        per_device_eval_batch_size=training_config.get('per_device_eval_batch_size', per_device_batch_size),
-        gradient_accumulation_steps=gradient_accumulation_steps,
-        learning_rate=training_config['learning_rate'],
+    # Build training arguments - conditionally include seed if not None
+    training_kwargs = {
+        'output_dir': output_dir,
+        'num_train_epochs': training_config.get('num_train_epochs', 20),  # Max epochs for early stopping
+        'per_device_train_batch_size': per_device_batch_size,
+        'per_device_eval_batch_size': training_config.get('per_device_eval_batch_size', per_device_batch_size),
+        'gradient_accumulation_steps': gradient_accumulation_steps,
+        'learning_rate': training_config['learning_rate'],
         # Learning rate schedule with warmup
-        lr_scheduler_type=training_config.get('lr_scheduler_type', 'linear'),
-        warmup_ratio=training_config.get('warmup_ratio', 0.1),  # 10% of training steps for warmup
+        'lr_scheduler_type': training_config.get('lr_scheduler_type', 'linear'),
+        'warmup_ratio': training_config.get('warmup_ratio', 0.1),  # 10% of training steps for warmup
         # Early stopping configuration
-        logging_dir=f"{output_dir}/logs",
-        logging_steps=training_config.get('logging_steps', 10),
-        eval_steps=eval_steps,
-        eval_strategy=training_config.get('eval_strategy', 'steps'),
-        save_strategy=training_config.get('save_strategy', 'steps'),
-        save_steps=save_steps,
-        save_total_limit=training_config.get('save_total_limit', 3),  # Keep only best 3 checkpoints
-        load_best_model_at_end=training_config.get('load_best_model_at_end', True),
-        metric_for_best_model=training_config.get('metric_for_best_model', 'eval_loss'),
-        greater_is_better=training_config.get('greater_is_better', False),
-        fp16=training_config.get('fp16', True) and torch.cuda.is_available(),
-    )
+        'logging_dir': f"{output_dir}/logs",
+        'logging_steps': training_config.get('logging_steps', 10),
+        'eval_steps': eval_steps,
+        'eval_strategy': training_config.get('eval_strategy', 'steps'),
+        'save_strategy': training_config.get('save_strategy', 'steps'),
+        'save_steps': save_steps,
+        'save_total_limit': training_config.get('save_total_limit', 3),  # Keep only best 3 checkpoints
+        'load_best_model_at_end': training_config.get('load_best_model_at_end', True),
+        'metric_for_best_model': training_config.get('metric_for_best_model', 'eval_loss'),
+        'greater_is_better': training_config.get('greater_is_better', False),
+        'fp16': training_config.get('fp16', True) and torch.cuda.is_available(),
+    }
+    
+    # Only include seed if it's not None
+    if seed is not None:
+        training_kwargs['seed'] = seed
+    
+    training_args = TrainingArguments(**training_kwargs)
 
     data_collator = DataCollatorWithPadding(tokenizer=tokenizer)
 
