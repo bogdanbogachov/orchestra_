@@ -17,10 +17,10 @@
 
 EXPERIMENTS=(
     "35_1_default_231 default_head False mean False True False"
-    "35_1_default_232 default_head False mean False False True False"
-    "35_1_default_233 default_head False mean False False True False"
-    "35_1_default_234 default_head False mean False False True False"
-    "35_1_default_235 default_head False mean False False True False"
+    "35_1_default_232 default_head False mean False True False"
+    "35_1_default_233 default_head False mean False True False"
+    "35_1_default_234 default_head False mean False True False"
+    "35_1_default_235 default_head False mean False True False"
     "35_1_custom_last_231 custom_head True last False False True"
     "35_1_custom_last_232 custom_head True last False False True"
     "35_1_custom_last_233 custom_head True last False False True"

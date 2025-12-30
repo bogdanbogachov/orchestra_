@@ -1,7 +1,7 @@
 import torch
 import json
 import os
-from transformers import TrainingArguments, Trainer, DataCollatorWithPadding
+from transformers import TrainingArguments, Trainer, DataCollatorWithPadding, EarlyStoppingCallback
 from sklearn.model_selection import train_test_split
 from config import CONFIG
 from commands.training.dataset import ClassificationDataset
@@ -26,10 +26,13 @@ def run_finetune():
     experiment_name = CONFIG.get('experiment', 'orchestra')
     experiments_dir = paths_config['experiments']
     
-    # Set random seed for reproducibility
-    seed = training_config.get('seed', 42)
-    set_seed(seed)
-    logger.info(f"✓ Set random seed to {seed} for reproducible training")
+    # Use random seed if specified, otherwise use None for non-deterministic training
+    seed = training_config.get('seed', None)
+    if seed is not None:
+        set_seed(seed)
+        logger.info(f"✓ Set random seed to {seed} for reproducible training")
+    else:
+        logger.info("✓ Using non-deterministic training (no fixed seed)")
     
     model, tokenizer, use_custom_head = load_model_and_tokenizer()
     model = setup_lora(model, use_custom_head)
@@ -42,10 +45,12 @@ def run_finetune():
     logger.info(f"Training {head_type} - output directory: {output_dir}")
     
     all_texts, all_labels = load_data(paths_config['data']['train'])
+    # Use random state only if seed is set, otherwise use None for random splits
+    split_random_state = data_config.get('random_state') if seed is not None else None
     train_texts, val_texts, train_labels, val_labels = train_test_split(
         all_texts, all_labels, 
         test_size=data_config['test_size'],
-        random_state=data_config['random_state'],
+        random_state=split_random_state,
         stratify=all_labels if data_config['stratify'] else None
     )
     
@@ -54,24 +59,54 @@ def run_finetune():
 
     logger.info(f"✓ Split data: {len(train_texts)} train, {len(val_texts)} validation ({data_config['test_size']*100:.1f}%)")
 
+    # Calculate gradient accumulation steps to achieve effective batch size of 16
+    per_device_batch_size = training_config.get('per_device_train_batch_size', 4)
+    effective_batch_size = training_config.get('effective_batch_size', 48)
+    gradient_accumulation_steps = max(1, effective_batch_size // per_device_batch_size)
+    
+    logger.info(f"✓ Batch configuration: per_device={per_device_batch_size}, "
+                f"gradient_accumulation={gradient_accumulation_steps}, "
+                f"effective_batch_size={per_device_batch_size * gradient_accumulation_steps}")
+    
+    # Set save_steps to match eval_steps if not specified
+    eval_steps = training_config.get('eval_steps', 25)
+    save_steps = training_config.get('save_steps', eval_steps)
+    
     training_args = TrainingArguments(
         output_dir=output_dir,
         seed=seed,
-        num_train_epochs=training_config['num_train_epochs'],
-        per_device_train_batch_size=training_config['per_device_train_batch_size'],
-        per_device_eval_batch_size=training_config['per_device_eval_batch_size'],
+        num_train_epochs=training_config.get('num_train_epochs', 20),  # Max epochs for early stopping
+        per_device_train_batch_size=per_device_batch_size,
+        per_device_eval_batch_size=training_config.get('per_device_eval_batch_size', per_device_batch_size),
+        gradient_accumulation_steps=gradient_accumulation_steps,
         learning_rate=training_config['learning_rate'],
+        # Learning rate schedule with warmup
+        lr_scheduler_type=training_config.get('lr_scheduler_type', 'linear'),
+        warmup_steps=training_config.get('warmup_steps', None),
+        warmup_ratio=training_config.get('warmup_ratio', 0.1),  # 10% of training steps for warmup
+        # Early stopping configuration
         logging_dir=f"{output_dir}/logs",
-        logging_steps=training_config['logging_steps'],
-        eval_steps=training_config['eval_steps'],
-        eval_strategy=training_config['eval_strategy'],
-        save_strategy=training_config['save_strategy'],
-        load_best_model_at_end=training_config['load_best_model_at_end'],
-        metric_for_best_model=training_config['metric_for_best_model'],
-        fp16=training_config['fp16'] and torch.cuda.is_available(),
+        logging_steps=training_config.get('logging_steps', 10),
+        eval_steps=eval_steps,
+        eval_strategy=training_config.get('eval_strategy', 'steps'),
+        save_strategy=training_config.get('save_strategy', 'steps'),
+        save_steps=save_steps,
+        save_total_limit=training_config.get('save_total_limit', 3),  # Keep only best 3 checkpoints
+        load_best_model_at_end=training_config.get('load_best_model_at_end', True),
+        metric_for_best_model=training_config.get('metric_for_best_model', 'eval_loss'),
+        greater_is_better=training_config.get('greater_is_better', False),
+        fp16=training_config.get('fp16', True) and torch.cuda.is_available(),
     )
 
     data_collator = DataCollatorWithPadding(tokenizer=tokenizer)
+
+    # Early stopping callback with industry-standard patience
+    early_stopping_patience = training_config.get('early_stopping_patience', 3)
+    early_stopping_callback = EarlyStoppingCallback(
+        early_stopping_patience=early_stopping_patience,
+        early_stopping_threshold=training_config.get('early_stopping_threshold', 0.0)
+    )
+    logger.info(f"✓ Early stopping enabled with patience={early_stopping_patience} evaluation steps")
 
     trainer = Trainer(
         model=model,
@@ -79,6 +114,7 @@ def run_finetune():
         train_dataset=train_dataset,
         eval_dataset=val_dataset,
         data_collator=data_collator,
+        callbacks=[early_stopping_callback],
     )
 
     trainer.train()

@@ -33,18 +33,31 @@ lora:
   bias: "none"
 
 training:
-  seed: 42
+  seed: null  # Set to null for non-deterministic training, or an integer for reproducibility
   max_length: 512
-  num_train_epochs: 1
-  per_device_train_batch_size: 2
-  per_device_eval_batch_size: 2
+  num_train_epochs: 20  # Max epochs (early stopping will stop earlier if no improvement)
+  per_device_train_batch_size: 4  # Will be combined with gradient_accumulation_steps to achieve effective_batch_size
+  per_device_eval_batch_size: 4
+  effective_batch_size: 16  # Effective batch size = per_device_train_batch_size * gradient_accumulation_steps
+  gradient_accumulation_steps: null  # Auto-calculated from effective_batch_size if null
   learning_rate: 0.00005
+  # Learning rate schedule
+  lr_scheduler_type: "cosine"  # Options: "linear", "cosine", "cosine_with_restarts", "polynomial", "constant"
+  warmup_steps: null  # If null, warmup_ratio will be used
+  warmup_ratio: 0.1  # 10% of training steps for warmup
+  # Early stopping
+  early_stopping_patience: 3  # Number of evaluation steps without improvement before stopping
+  early_stopping_threshold: 0.0  # Minimum change to qualify as an improvement
+  # Evaluation and saving
   logging_steps: 10
   eval_steps: 25
   eval_strategy: "steps"
-  save_strategy: "no"
-  load_best_model_at_end: false
-  metric_for_best_model: "loss"
+  save_strategy: "steps"  # Changed from "no" to save checkpoints for early stopping
+  save_steps: null  # If null, will use eval_steps
+  save_total_limit: 3  # Keep only the best 3 checkpoints to save disk space
+  load_best_model_at_end: true  # Load best model based on validation metric
+  metric_for_best_model: "eval_loss"  # Metric to use for best model selection
+  greater_is_better: false  # False for loss (lower is better), true for accuracy
   fp16: true
 
 data_processing:
