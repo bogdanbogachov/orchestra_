@@ -84,7 +84,6 @@ def run_finetune():
         learning_rate=training_config['learning_rate'],
         # Learning rate schedule with warmup
         lr_scheduler_type=training_config.get('lr_scheduler_type', 'linear'),
-        warmup_steps=training_config.get('warmup_steps', None),
         warmup_ratio=training_config.get('warmup_ratio', 0.1),  # 10% of training steps for warmup
         # Early stopping configuration
         logging_dir=f"{output_dir}/logs",
