@@ -13,52 +13,42 @@
 #   D_INF     - "True" or "False" (run default inference)
 #   C_INF     - "True" or "False" (run custom inference)
 
-# Experiment configurations - 9 experiments
+# Experiment configurations - 9 core experiments
+# Using loops to generate repetitive entries
 
-EXPERIMENTS=(
-    "35_1_default_271 default_head False mean False True False"
-#    "35_1_default_232 default_head False mean False True False"
-#    "35_1_default_233 default_head False mean False True False"
-#    "35_1_default_234 default_head False mean False True False"
-#    "35_1_default_235 default_head False mean False True False"
-#    "35_1_custom_last_231 custom_head True last False False True"
-#    "35_1_custom_last_232 custom_head True last False False True"
-#    "35_1_custom_last_233 custom_head True last False False True"
-#    "35_1_custom_last_234 custom_head True last False False True"
-#    "35_1_custom_last_235 custom_head True last False False True"
-#    "35_1_custom_max_231 custom_head True max False False True"
-#    "35_1_custom_max_232 custom_head True max False False True"
-#    "35_1_custom_max_233 custom_head True max False False True"
-#    "35_1_custom_max_234 custom_head True max False False True"
-#    "35_1_custom_max_235 custom_head True max False False True"
-#    "35_l_custom_mean_231 custom_head True mean False False True"
-#    "35_l_custom_mean_232 custom_head True mean False False True"
-#    "35_l_custom_mean_233 custom_head True mean False False True"
-#    "35_l_custom_mean_234 custom_head True mean False False True"
-#    "35_l_custom_mean_235 custom_head True mean False False True"
-#    "35_l_custom_attention_231 custom_head True attention False False True"
-#    "35_l_custom_attention_232 custom_head True attention False False True"
-#    "35_l_custom_attention_233 custom_head True attention False False True"
-#    "35_l_custom_attention_234 custom_head True attention False False True"
-#    "35_l_custom_attention_235 custom_head True attention False False True"
-#    "35_l_custom_fft_last_231 custom_head True last True False True"
-#    "35_l_custom_fft_last_232 custom_head True last True False True"
-#    "35_l_custom_fft_last_233 custom_head True last True False True"
-#    "35_l_custom_fft_last_234 custom_head True last True False True"
-#    "35_l_custom_fft_last_235 custom_head True last True False True"
-#    "35_l_custom_fft_max_231 custom_head True max True False True"
-#    "35_l_custom_fft_max_232 custom_head True max True False True"
-#    "35_l_custom_fft_max_233 custom_head True max True False True"
-#    "35_l_custom_fft_max_234 custom_head True max True False True"
-#    "35_l_custom_fft_max_235 custom_head True max True False True"
-#    "35_l_custom_fft_mean_231 custom_head True mean True False True"
-#    "35_l_custom_fft_mean_232 custom_head True mean True False True"
-#    "35_l_custom_fft_mean_233 custom_head True mean True False True"
-#    "35_l_custom_fft_mean_234 custom_head True mean True False True"
-#    "35_l_custom_fft_mean_235 custom_head True mean True False True"
-#    "35_l_custom_fft_attention_231 custom_head True attention True False True"
-#    "35_l_custom_fft_attention_232 custom_head True attention True False True"
-#    "35_l_custom_fft_attention_233 custom_head True attention True False True"
-#    "35_l_custom_fft_attention_234 custom_head True attention True False True"
-#    "35_l_custom_fft_attention_235 custom_head True attention True False True"
-)
+EXPERIMENTS=()
+
+# Helper function to add experiments with number range
+add_experiments() {
+    local base_name=$1
+    local eval_head=$2
+    local custom=$3
+    local pool=$4
+    local fft=$5
+    local d_inf=$6
+    local c_inf=$7
+    local start_num=$8
+    local end_num=$9
+    
+    for i in $(seq $start_num $end_num); do
+        EXPERIMENTS+=("${base_name}_${i} ${eval_head} ${custom} ${pool} ${fft} ${d_inf} ${c_inf}")
+    done
+}
+
+add_experiments "35_l_default" "default_head" "False" "mean" "False" "True" "False" 1 2
+
+add_experiments "35_l_custom_last" "custom_head" "True" "last" "False" "False" "True" 1 2
+#
+#add_experiments "35_l_custom_max" "custom_head" "True" "max" "False" "False" "True" 1 15
+#
+#add_experiments "35_l_custom_mean" "custom_head" "True" "mean" "False" "False" "True" 1 15
+#
+#add_experiments "35_l_custom_attention" "custom_head" "True" "attention" "False" "False" "True" 1 15
+#
+#add_experiments "35_l_custom_fft_last" "custom_head" "True" "last" "True" "False" "True" 1 15
+#
+#add_experiments "35_l_custom_fft_max" "custom_head" "True" "max" "True" "False" "True" 1 15
+#
+#add_experiments "35_l_custom_fft_mean" "custom_head" "True" "mean" "True" "False" "True" 1 15
+#
+#add_experiments "35_l_custom_fft_attention" "custom_head" "True" "attention" "True" "False" "True" 1 15
