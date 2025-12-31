@@ -9,6 +9,7 @@ from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
 from config import CONFIG
 from logger_config import logger
+from commands.utils.metrics import get_memory_usage, reset_memory_tracking, calculate_flops_for_transformer, EnergyTracker
 
 
 def _resolve_default_adapter_path(adapter_path: Optional[str]) -> str:
@@ -98,6 +99,27 @@ def run_infer_default(
 
         results: List[Dict[str, Any]] = []
         logger.info(f"Running default-head inference on dataset: {test_path} ({len(data)} samples)")
+        
+        # Initialize energy tracker for Green AI metrics
+        output_dir = os.path.dirname(output_path)
+        energy_tracker = None
+        try:
+            energy_tracker = EnergyTracker(
+                output_dir=output_dir,
+                experiment_name=experiment_name,
+                task_name="inference_default_head"
+            )
+            energy_tracker.start()
+            logger.info("✓ Started energy tracking for inference")
+        except Exception as e:
+            logger.warning(f"Could not initialize energy tracker: {e}")
+        
+        # Reset memory tracking and calculate FLOPs on first sample
+        device = next(model.parameters()).device
+        reset_memory_tracking(device)
+        flops_per_sample = 0
+        peak_memory_mb = 0.0
+        
         for i, item in enumerate(data):
             text = item["text"]
             true_label = item.get("label")
@@ -106,6 +128,28 @@ def run_infer_default(
             latency_ms = (time.time() - start) * 1000.0
             probs = out["probs"].squeeze(0).detach().cpu().tolist()
             pred = int(int(torch.tensor(probs).argmax().item()))
+            
+            # Calculate FLOPs on first sample using standard industry approach (thop)
+            if i == 0:
+                try:
+                    inputs = tokenizer(text, return_tensors="pt", padding=True, truncation=True)
+                    inputs = {k: v.to(device) for k, v in inputs.items()}
+                    flops_per_sample = calculate_flops_for_transformer(
+                        model, inputs["input_ids"], inputs.get("attention_mask")
+                    )
+                    logger.info(f"  Calculated forward FLOPs per sample: {flops_per_sample:,} (standard approach)")
+                except Exception as e:
+                    logger.warning(f"  Could not calculate FLOPs: {e}")
+                    flops_per_sample = 0
+            
+            # Track peak memory usage
+            memory_info = get_memory_usage(device)
+            if device.type == 'cuda' and torch.cuda.is_available():
+                current_peak = memory_info.get('gpu_max_allocated_mb', 0.0)
+            else:
+                current_peak = memory_info.get('cpu_rss_mb', 0.0)
+            peak_memory_mb = max(peak_memory_mb, current_peak)
+            
             results.append(
                 {
                     "text": text,
@@ -118,6 +162,23 @@ def run_infer_default(
             if (i + 1) % 50 == 0:
                 logger.info(f"  Processed {i + 1}/{len(data)} samples")
 
+        # Get final memory stats
+        final_memory_info = get_memory_usage(device)
+        
+        # Stop energy tracking and get metrics
+        energy_metrics = {}
+        if energy_tracker is not None:
+            try:
+                energy_metrics = energy_tracker.stop()
+                logger.info("✓ Stopped energy tracking")
+            except Exception as e:
+                logger.warning(f"Error stopping energy tracker: {e}")
+        
+        # Calculate total FLOPs for entire inference run
+        total_flops = int(flops_per_sample * len(results)) if flops_per_sample > 0 else 0
+        if total_flops > 0:
+            logger.info(f"  Total inference FLOPs: {total_flops:,} (for {len(results)} samples)")
+        
         payload = {
             "experiment": experiment_name,
             "head": "default_head",
@@ -125,7 +186,38 @@ def run_infer_default(
             "input_path": test_path,
             "num_samples": len(results),
             "predictions": results,
+            "metrics": {
+                "flops_per_sample": int(flops_per_sample),
+                "total_flops": int(total_flops),
+                "peak_memory_mb": float(peak_memory_mb),
+                "memory_info": {k: float(v) for k, v in final_memory_info.items()},
+            },
         }
+        
+        # Add energy and carbon metrics (Green AI metrics)
+        if energy_metrics:
+            payload["metrics"]["energy_consumption"] = {
+                "energy_consumed_kwh": energy_metrics.get("energy_consumed_kwh", 0.0),
+                "cpu_energy_kwh": energy_metrics.get("cpu_energy_kwh", 0.0),
+                "gpu_energy_kwh": energy_metrics.get("gpu_energy_kwh", 0.0),
+                "ram_energy_kwh": energy_metrics.get("ram_energy_kwh", 0.0),
+                "duration_seconds": energy_metrics.get("duration_seconds", 0.0),
+            }
+            payload["metrics"]["carbon_footprint"] = {
+                "emissions_gco2eq": energy_metrics.get("emissions_gco2eq", 0.0),
+                "emissions_rate_gco2eq_per_hour": energy_metrics.get("emissions_rate_gco2eq_per_hour", 0.0),
+                "country_name": energy_metrics.get("country_name", "unknown"),
+                "region": energy_metrics.get("region", "unknown"),
+            }
+            
+            energy_kwh = energy_metrics.get("energy_consumed_kwh", 0.0)
+            emissions = energy_metrics.get("emissions_gco2eq", 0.0)
+            if energy_kwh > 0:
+                logger.info(f"  Energy consumed: {energy_kwh:.4f} kWh")
+                logger.info(f"  Carbon footprint: {emissions:.4f} gCO₂eq")
+                if len(results) > 0:
+                    energy_per_sample = energy_kwh / len(results)
+                    logger.info(f"  Energy per sample: {energy_per_sample:.6f} kWh")
         with open(output_path, "w", encoding="utf-8") as f:
             json.dump(payload, f, indent=2)
         logger.info(f"✓ Saved default-head predictions to {output_path}")

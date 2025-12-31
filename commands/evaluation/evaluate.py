@@ -87,12 +87,66 @@ def run_evaluation(head: Optional[str] = None):
 
     lat = [float(x.get("latency_ms", 0.0)) for x in payload["predictions"]]
     head_metrics = _compute_metrics(y_true, preds, lat)
+    
+    # Extract FLOPs and memory metrics from predictions payload (inference metrics)
+    metrics = payload.get("metrics", {})
+    inference_flops_per_sample = metrics.get("flops_per_sample", 0)
+    inference_total_flops = metrics.get("total_flops", 0)
+    inference_peak_memory_mb = metrics.get("peak_memory_mb", 0.0)
+    inference_memory_info = metrics.get("memory_info", {})
+    inference_energy_consumption = metrics.get("energy_consumption", {})
+    inference_carbon_footprint = metrics.get("carbon_footprint", {})
+    
+    # Try to load training metrics if available
+    training_metrics_path = os.path.join(experiment_dir, chosen_head, "training_metrics.json")
+    training_metrics = {}
+    if os.path.exists(training_metrics_path):
+        try:
+            with open(training_metrics_path, "r", encoding="utf-8") as f:
+                training_metrics = json.load(f)
+            logger.info(f"✓ Loaded training metrics from {training_metrics_path}")
+        except Exception as e:
+            logger.warning(f"Could not load training metrics: {e}")
 
     head_results = {
         **common,
         "head": chosen_head,
         **head_metrics,
+        "inference_metrics": {
+            "flops_per_sample": int(inference_flops_per_sample),
+            "total_flops": int(inference_total_flops),
+            "peak_memory_mb": float(inference_peak_memory_mb),
+            "memory_info": inference_memory_info,
+        },
     }
+    
+    # Add inference energy and carbon metrics if available
+    if inference_energy_consumption:
+        head_results["inference_metrics"]["energy_consumption"] = inference_energy_consumption
+    if inference_carbon_footprint:
+        head_results["inference_metrics"]["carbon_footprint"] = inference_carbon_footprint
+    
+    # Add training metrics if available
+    if training_metrics:
+        head_results["training_metrics"] = {
+            "flops_per_sample_forward": training_metrics.get("flops_per_sample_forward", 0),
+            "flops_per_sample_backward": training_metrics.get("flops_per_sample_backward", 0),
+            "flops_per_sample_total": training_metrics.get("flops_per_sample_total", 0),
+            "total_flops": training_metrics.get("total_flops", 0),
+            "total_samples_processed": training_metrics.get("total_samples_processed", 0),
+            "peak_memory_mb": training_metrics.get("peak_memory_mb", 0.0),
+            "memory_info": training_metrics.get("memory_info", {}),
+            "training_steps": training_metrics.get("training_steps", 0),
+            "training_epochs": training_metrics.get("training_epochs", 0),
+            "calculation_method": training_metrics.get("calculation_method", "standard_industry_approach"),
+            "backward_multiplier": training_metrics.get("backward_multiplier", 2.0),
+        }
+        
+        # Add training energy and carbon metrics if available (Green AI metrics)
+        if "energy_consumption" in training_metrics:
+            head_results["training_metrics"]["energy_consumption"] = training_metrics["energy_consumption"]
+        if "carbon_footprint" in training_metrics:
+            head_results["training_metrics"]["carbon_footprint"] = training_metrics["carbon_footprint"]
 
     out_file = os.path.join(experiment_dir, chosen_head, "evaluation_results.json")
     os.makedirs(os.path.dirname(out_file), exist_ok=True)

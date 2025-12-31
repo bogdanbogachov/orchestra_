@@ -7,6 +7,7 @@ from config import CONFIG
 from commands.training.dataset import ClassificationDataset
 from commands.training.model import load_model_and_tokenizer, setup_lora
 from commands.training.seed_utils import set_seed
+from commands.training.metrics_callback import TrainingMetricsCallback
 from logger_config import logger
 
 def load_data(data_path: str):
@@ -115,13 +116,17 @@ def run_finetune():
     )
     logger.info(f"✓ Early stopping enabled with patience={early_stopping_patience} evaluation steps")
 
+    # Training metrics callback for FLOPs and memory tracking
+    metrics_callback = TrainingMetricsCallback(output_dir=output_dir)
+    logger.info("✓ Training metrics tracking enabled (FLOPs and memory)")
+
     trainer = Trainer(
         model=model,
         args=training_args,
         train_dataset=train_dataset,
         eval_dataset=val_dataset,
         data_collator=data_collator,
-        callbacks=[early_stopping_callback],
+        callbacks=[early_stopping_callback, metrics_callback],
     )
 
     trainer.train()
