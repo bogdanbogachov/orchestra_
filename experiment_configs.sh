@@ -39,20 +39,20 @@ add_experiments() {
 }
 
 # Format: add_experiments "base_name" "eval_head" "custom" "pool" "fft" "d_inf" "c_inf" global_exp_num per_config_start per_config_end
-add_experiments "35_l_default" "default_head" "False" "mean" "False" "True" "False" 1 1 5
+add_experiments "35_l_default" "default_head" "False" "mean" "False" "True" "False" 1 1 2
 
-add_experiments "35_l_custom_last" "custom_head" "True" "last" "False" "False" "True" 1 1 5
+add_experiments "35_l_custom_last" "custom_head" "True" "last" "False" "False" "True" 1 1 2
 
-add_experiments "35_l_custom_max" "custom_head" "True" "max" "False" "False" "True" 1 1 5
-
-add_experiments "35_l_custom_mean" "custom_head" "True" "mean" "False" "False" "True" 1 1 5
-
-add_experiments "35_l_custom_attention" "custom_head" "True" "attention" "False" "False" "True" 1 1 5
-
-add_experiments "35_l_custom_fft_last" "custom_head" "True" "last" "True" "False" "True" 1 1 5
-
-add_experiments "35_l_custom_fft_max" "custom_head" "True" "max" "True" "False" "True" 1 1 5
-
-add_experiments "35_l_custom_fft_mean" "custom_head" "True" "mean" "True" "False" "True" 1 1 5
-
-add_experiments "35_l_custom_fft_attention" "custom_head" "True" "attention" "True" "False" "True" 1 1 5
+#add_experiments "35_l_custom_max" "custom_head" "True" "max" "False" "False" "True" 1 1 5
+#
+#add_experiments "35_l_custom_mean" "custom_head" "True" "mean" "False" "False" "True" 1 1 5
+#
+#add_experiments "35_l_custom_attention" "custom_head" "True" "attention" "False" "False" "True" 1 1 5
+#
+#add_experiments "35_l_custom_fft_last" "custom_head" "True" "last" "True" "False" "True" 1 1 5
+#
+#add_experiments "35_l_custom_fft_max" "custom_head" "True" "max" "True" "False" "True" 1 1 5
+#
+#add_experiments "35_l_custom_fft_mean" "custom_head" "True" "mean" "True" "False" "True" 1 1 5
+#
+#add_experiments "35_l_custom_fft_attention" "custom_head" "True" "attention" "True" "False" "True" 1 1 5
