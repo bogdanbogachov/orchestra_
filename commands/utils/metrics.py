@@ -3,7 +3,7 @@ Utility functions for tracking FLOPs, memory usage, energy consumption, and carb
 
 Uses standard industry tools:
 - thop: For FLOPs calculation
-- CodeCarbon: For energy consumption and CO₂ emissions tracking (Green AI standard)
+- nvidia-smi: For GPU energy consumption tracking (works with MIG devices)
 """
 import torch
 from typing import Dict, Any, Optional, Tuple
@@ -133,43 +133,69 @@ def calculate_flops_for_transformer(
             "thop is required for FLOPs calculation. Install it with: pip install thop"
         )
     
-    # Create a wrapper function for thop to handle dictionary inputs
-    def model_wrapper(input_ids, attention_mask=None):
-        if attention_mask is not None:
-            return model(input_ids=input_ids, attention_mask=attention_mask)
-        else:
-            return model(input_ids=input_ids)
+    # Clear any existing thop attributes from previous profiling
+    def clear_thop_attributes(model):
+        for module in model.modules():
+            if hasattr(module, 'total_ops'):
+                delattr(module, 'total_ops')
+            if hasattr(module, 'total_params'):
+                delattr(module, 'total_params')
+    
+    # Ensure model is in eval mode for profiling
+    was_training = model.training
+    model.eval()
     
     try:
+        # Clear any previous profiling attributes
+        clear_thop_attributes(model)
+        
         with torch.no_grad():
+            # thop.profile expects the model directly, not a wrapper function
+            # Try passing inputs as tuple first (most common case)
             if attention_mask is not None:
-                flops, params = profile(model_wrapper, inputs=(input_ids, attention_mask), verbose=False)
+                flops, params = profile(
+                    model,
+                    inputs=(input_ids, attention_mask),
+                    verbose=False
+                )
             else:
-                flops, params = profile(model_wrapper, inputs=(input_ids,), verbose=False)
+                flops, params = profile(
+                    model,
+                    inputs=(input_ids,),
+                    verbose=False
+                )
         return int(flops)
     except Exception as e:
-        # Fallback: try direct model call with tuple inputs
+        # Fallback: try with dictionary inputs using a Module wrapper
         try:
+            clear_thop_attributes(model)
             with torch.no_grad():
+                inputs_dict = {'input_ids': input_ids}
                 if attention_mask is not None:
-                    # Try passing as separate arguments
-                    flops, params = profile(model, inputs=(input_ids, attention_mask), verbose=False)
-                else:
-                    flops, params = profile(model, inputs=(input_ids,), verbose=False)
+                    inputs_dict['attention_mask'] = attention_mask
+                # Create a wrapper class that thop can profile (must be a Module, not a function)
+                class ModelWrapper(torch.nn.Module):
+                    def __init__(self, model):
+                        super().__init__()
+                        self.model = model
+                    def forward(self, inputs_dict):
+                        return self.model(**inputs_dict)
+                
+                wrapped_model = ModelWrapper(model)
+                flops, params = profile(
+                    wrapped_model,
+                    inputs=(inputs_dict,),
+                    verbose=False
+                )
             return int(flops)
         except Exception as e2:
-            # Final fallback: try with dictionary
-            try:
-                with torch.no_grad():
-                    inputs_dict = {'input_ids': input_ids}
-                    if attention_mask is not None:
-                        inputs_dict['attention_mask'] = attention_mask
-                    flops, params = profile(model, inputs=(inputs_dict,), verbose=False)
-                return int(flops)
-            except Exception:
-                import warnings
-                warnings.warn(f"Could not calculate FLOPs: {e}, {e2}")
-                return 0
+            import warnings
+            warnings.warn(f"Could not calculate FLOPs: {e}, {e2}")
+            return 0
+    finally:
+        # Restore training mode
+        if was_training:
+            model.train()
 
 
 def calculate_training_flops(
@@ -209,10 +235,10 @@ def calculate_training_flops(
 
 class EnergyTracker:
     """
-    Wrapper for CodeCarbon EmissionsTracker to track energy consumption and CO₂ emissions.
+    Track energy consumption and CO₂ emissions using nvidia-smi.
     
-    This follows the Green AI standard approach used in papers for measuring
-    environmental impact of ML experiments.
+    This uses nvidia-smi to query GPU energy counters, which works with MIG devices
+    by reading the parent GPU's energy consumption.
     """
     
     def __init__(self, output_dir: str, experiment_name: str, task_name: str = "training"):
@@ -220,38 +246,20 @@ class EnergyTracker:
         Initialize energy tracker.
         
         Args:
-            output_dir: Directory to save emissions data
+            output_dir: Directory to save energy data (for compatibility, not actively used)
             experiment_name: Name of the experiment
             task_name: Name of the task (e.g., "training", "inference")
         """
         self.output_dir = output_dir
         self.experiment_name = experiment_name
         self.task_name = task_name
-        self.tracker = None
-        self._initialize_tracker()
-    
-    def _initialize_tracker(self):
-        """Initialize CodeCarbon tracker."""
         try:
-            from codecarbon import EmissionsTracker
-            
-            # Create output directory for emissions data
-            os.makedirs(self.output_dir, exist_ok=True)
-            emissions_file = os.path.join(self.output_dir, f"{self.task_name}_emissions.csv")
-            
-            self.tracker = EmissionsTracker(
-                output_dir=self.output_dir,
-                output_file=emissions_file,
-                project_name=f"{self.experiment_name}_{self.task_name}",
-                log_level="error",  # Reduce verbosity
-            )
-        except ImportError:
+            from commands.utils.gpu_energy import NvidiaSMIEnergyTracker
+            self.tracker = NvidiaSMIEnergyTracker(output_dir, experiment_name, task_name)
+        except Exception as e:
             self.tracker = None
             import warnings
-            warnings.warn(
-                "CodeCarbon not installed. Energy and carbon tracking will be disabled. "
-                "Install with: pip install codecarbon"
-            )
+            warnings.warn(f"Could not initialize nvidia-smi energy tracker: {e}")
     
     def start(self):
         """Start tracking energy consumption."""
@@ -271,57 +279,7 @@ class EnergyTracker:
         """
         if self.tracker is not None:
             try:
-                self.tracker.stop()
-                
-                # Try to get emissions data from tracker
-                # CodeCarbon stores data in different ways depending on version
-                try:
-                    # Try accessing the emissions data directly
-                    if hasattr(self.tracker, '_emissions_data') and self.tracker._emissions_data:
-                        emissions_data = self.tracker._emissions_data
-                    elif hasattr(self.tracker, 'final_emissions_data') and self.tracker.final_emissions_data:
-                        emissions_data = self.tracker.final_emissions_data
-                    else:
-                        # Try to read from CSV file
-                        emissions_file = os.path.join(self.output_dir, f"{self.task_name}_emissions.csv")
-                        if os.path.exists(emissions_file):
-                            import pandas as pd
-                            df = pd.read_csv(emissions_file)
-                            if len(df) > 0:
-                                last_row = df.iloc[-1]
-                                emissions_data = {
-                                    "energy_consumed": float(last_row.get("energy_consumed", 0.0)),
-                                    "emissions": float(last_row.get("emissions", 0.0)),
-                                    "emissions_rate": float(last_row.get("emissions_rate", 0.0)),
-                                    "cpu_energy": float(last_row.get("cpu_energy", 0.0)),
-                                    "gpu_energy": float(last_row.get("gpu_energy", 0.0)),
-                                    "ram_energy": float(last_row.get("ram_energy", 0.0)),
-                                    "duration": float(last_row.get("duration", 0.0)),
-                                    "country_name": str(last_row.get("country_name", "unknown")),
-                                    "region": str(last_row.get("region", "unknown")),
-                                }
-                            else:
-                                emissions_data = None
-                        else:
-                            emissions_data = None
-                    
-                    if emissions_data:
-                        return {
-                            "energy_consumed_kwh": float(emissions_data.get("energy_consumed", 0.0)),
-                            "emissions_gco2eq": float(emissions_data.get("emissions", 0.0)),
-                            "emissions_rate_gco2eq_per_hour": float(emissions_data.get("emissions_rate", 0.0)),
-                            "cpu_energy_kwh": float(emissions_data.get("cpu_energy", 0.0)),
-                            "gpu_energy_kwh": float(emissions_data.get("gpu_energy", 0.0)),
-                            "ram_energy_kwh": float(emissions_data.get("ram_energy", 0.0)),
-                            "duration_seconds": float(emissions_data.get("duration", 0.0)),
-                            "country_name": emissions_data.get("country_name", "unknown"),
-                            "region": emissions_data.get("region", "unknown"),
-                        }
-                except Exception as e:
-                    import warnings
-                    warnings.warn(f"Could not extract emissions data: {e}")
-                
-                return self._get_empty_metrics()
+                return self.tracker.stop()
             except Exception as e:
                 import warnings
                 warnings.warn(f"Failed to stop energy tracker: {e}")

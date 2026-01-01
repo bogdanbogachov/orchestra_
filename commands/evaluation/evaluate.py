@@ -86,7 +86,11 @@ def run_evaluation(head: Optional[str] = None):
         )
 
     lat = [float(x.get("latency_ms", 0.0)) for x in payload["predictions"]]
-    head_metrics = _compute_metrics(y_true, preds, lat)
+    # Exclude first prediction from latency statistics (warmup/cold start)
+    lat_for_stats = lat[1:] if len(lat) > 1 else lat
+    if len(lat) > 1:
+        logger.info(f"  Excluding first prediction from latency stats (warmup: {lat[0]:.2f} ms, using {len(lat_for_stats)} samples)")
+    head_metrics = _compute_metrics(y_true, preds, lat_for_stats)
     
     # Extract FLOPs and memory metrics from predictions payload (inference metrics)
     metrics = payload.get("metrics", {})

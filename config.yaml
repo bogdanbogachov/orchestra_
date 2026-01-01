@@ -46,7 +46,7 @@ training:
   warmup_steps: null  # If null, warmup_ratio will be used
   warmup_ratio: 0.1  # 10% of training steps for warmup
   # Early stopping
-  early_stopping_patience: 5  # Number of evaluation steps without improvement before stopping
+  early_stopping_patience: 3  # Number of evaluation steps without improvement before stopping
   early_stopping_threshold: 0.002  # Minimum change to qualify as an improvement
   # Evaluation and saving
   logging_steps: 10
