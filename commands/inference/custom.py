@@ -163,7 +163,6 @@ def run_infer_custom(
                     # Calculate FLOPs for classifier (approximate by running forward pass)
                     # We'll use thop to profile the combined forward pass
                     classifier_flops = 0
-                    classifier_flops_calculated = False
                     try:
                         from thop import profile
                         with torch.no_grad():
