@@ -10,6 +10,16 @@ from typing import Dict, Any, Optional, Tuple
 import psutil
 import os
 import contextlib
+import logging
+
+logger = logging.getLogger(__name__)
+
+try:
+    from thop import profile
+    THOP_AVAILABLE = True
+except ImportError:
+    THOP_AVAILABLE = False
+    logger.warning("thop not available - FLOPs calculation will be disabled")
 
 
 def get_memory_usage(device: Optional[torch.device] = None) -> Dict[str, float]:
@@ -41,7 +51,7 @@ def get_memory_usage(device: Optional[torch.device] = None) -> Dict[str, float]:
     return memory_info
 
 
-def reset_memory_tracking(device: Optional[torch.device] = None):
+def reset_memory_tracking(device: Optional[torch.device] = None) -> None:
     """
     Reset memory tracking counters.
     
@@ -52,59 +62,41 @@ def reset_memory_tracking(device: Optional[torch.device] = None):
         torch.cuda.reset_peak_memory_stats(device)
 
 
-def calculate_flops(model: torch.nn.Module, input_shape: Tuple[int, ...], device: Optional[torch.device] = None) -> int:
+def _clear_thop_hooks_and_attributes(model: torch.nn.Module) -> None:
     """
-    Calculate FLOPs (Floating Point Operations) for a model forward pass.
+    Remove all thop hooks and attributes from a model.
+    
+    This is critical for PEFT/LoRA models to prevent AttributeError
+    during inference after profiling.
     
     Args:
-        model: PyTorch model
-        input_shape: Shape of input tensor (batch_size, seq_len, ...)
-        device: Device to run calculation on
-        
-    Returns:
-        Number of FLOPs as integer
+        model: PyTorch model to clean
     """
-    try:
-        from thop import profile, clever_format
-    except ImportError:
-        raise ImportError(
-            "thop is required for FLOPs calculation. Install it with: pip install thop"
-        )
+    for module in model.modules():
+        # Remove thop attributes
+        if hasattr(module, 'total_ops'):
+            delattr(module, 'total_ops')
+        if hasattr(module, 'total_params'):
+            delattr(module, 'total_params')
+        
+        # Remove all hooks (thop registers forward hooks)
+        module._forward_hooks.clear()
+        module._forward_pre_hooks.clear()
+        module._backward_hooks.clear()
+
+
+class TransformerModelWrapper(torch.nn.Module):
+    """Wrapper to handle keyword arguments for thop profiling."""
     
-    # Create dummy input
-    if device is None:
-        device = next(model.parameters()).device
+    def __init__(self, base_model):
+        super().__init__()
+        self.model = base_model
     
-    # For transformer models, we need input_ids and attention_mask
-    # We'll create a dummy input based on the model type
-    try:
-        # Try to create appropriate dummy input
-        batch_size, seq_len = input_shape[0], input_shape[1]
-        dummy_input_ids = torch.randint(0, 1000, (batch_size, seq_len), device=device)
-        dummy_attention_mask = torch.ones((batch_size, seq_len), device=device)
-        
-        # Check if model expects these inputs
-        dummy_inputs = {'input_ids': dummy_input_ids, 'attention_mask': dummy_attention_mask}
-        
-        with torch.no_grad():
-            flops, params = profile(model, inputs=(dummy_inputs,), verbose=False)
-        
-        return int(flops)
-    except Exception as e:
-        # Fallback: try with just input_ids
-        try:
-            batch_size, seq_len = input_shape[0], input_shape[1]
-            dummy_input_ids = torch.randint(0, 1000, (batch_size, seq_len), device=device)
-            
-            with torch.no_grad():
-                flops, params = profile(model, inputs=(dummy_input_ids,), verbose=False)
-            
-            return int(flops)
-        except Exception:
-            # If all else fails, return 0 and log warning
-            import warnings
-            warnings.warn(f"Could not calculate FLOPs: {e}")
-            return 0
+    def forward(self, input_ids, attention_mask=None):
+        kwargs = {'input_ids': input_ids}
+        if attention_mask is not None:
+            kwargs['attention_mask'] = attention_mask
+        return self.model(**kwargs)
 
 
 def calculate_flops_for_transformer(
@@ -118,6 +110,9 @@ def calculate_flops_for_transformer(
     This uses the standard industry approach (thop library).
     Calculates forward pass FLOPs only.
     
+    IMPORTANT: This function cleans up all thop artifacts after profiling
+    to prevent AttributeError with PEFT/LoRA models during subsequent inference.
+    
     Args:
         model: PyTorch model
         input_ids: Input token IDs tensor
@@ -126,73 +121,34 @@ def calculate_flops_for_transformer(
     Returns:
         Number of FLOPs (forward pass only) as integer
     """
-    try:
-        from thop import profile
-    except ImportError:
-        raise ImportError(
-            "thop is required for FLOPs calculation. Install it with: pip install thop"
-        )
+    if not THOP_AVAILABLE:
+        logger.warning("thop not available, returning 0 FLOPs")
+        return 0
     
-    # Clear any existing thop attributes from previous profiling
-    def clear_thop_attributes(model):
-        for module in model.modules():
-            if hasattr(module, 'total_ops'):
-                delattr(module, 'total_ops')
-            if hasattr(module, 'total_params'):
-                delattr(module, 'total_params')
-    
-    # Ensure model is in eval mode for profiling
     was_training = model.training
     model.eval()
     
     try:
-        # Clear any previous profiling attributes
-        clear_thop_attributes(model)
+        # Clear any existing thop artifacts before profiling
+        _clear_thop_hooks_and_attributes(model)
         
         with torch.no_grad():
-            # thop.profile expects the model directly, not a wrapper function
-            # Try passing inputs as tuple first (most common case)
-            if attention_mask is not None:
-                flops, params = profile(
-                    model,
-                    inputs=(input_ids, attention_mask),
-                    verbose=False
-                )
-            else:
-                flops, params = profile(
-                    model,
-                    inputs=(input_ids,),
-                    verbose=False
-                )
+            wrapped = TransformerModelWrapper(model)
+            flops, params = profile(
+                wrapped,
+                inputs=(input_ids, attention_mask) if attention_mask is not None else (input_ids,),
+                verbose=False
+            )
+            
         return int(flops)
+        
     except Exception as e:
-        # Fallback: try with dictionary inputs using a Module wrapper
-        try:
-            clear_thop_attributes(model)
-            with torch.no_grad():
-                inputs_dict = {'input_ids': input_ids}
-                if attention_mask is not None:
-                    inputs_dict['attention_mask'] = attention_mask
-                # Create a wrapper class that thop can profile (must be a Module, not a function)
-                class ModelWrapper(torch.nn.Module):
-                    def __init__(self, model):
-                        super().__init__()
-                        self.model = model
-                    def forward(self, inputs_dict):
-                        return self.model(**inputs_dict)
-                
-                wrapped_model = ModelWrapper(model)
-                flops, params = profile(
-                    wrapped_model,
-                    inputs=(inputs_dict,),
-                    verbose=False
-                )
-            return int(flops)
-        except Exception as e2:
-            import warnings
-            warnings.warn(f"Could not calculate FLOPs: {e}, {e2}")
-            return 0
+        logger.error(f"Failed to calculate FLOPs: {e}", exc_info=True)
+        return 0
     finally:
+        # CRITICAL: Clean up thop artifacts to prevent inference errors
+        _clear_thop_hooks_and_attributes(model)
+        
         # Restore training mode
         if was_training:
             model.train()
@@ -201,23 +157,23 @@ def calculate_flops_for_transformer(
 def calculate_training_flops(
     forward_flops_per_sample: int,
     num_samples: int,
+    backward_multiplier: float = 2.0,
 ) -> int:
     """
     Calculate total training FLOPs using the standard industry approach.
     
     Standard approach:
     - Forward pass FLOPs: measured directly
-    - Backward pass FLOPs: 2x forward pass (standard assumption in papers)
-    - Total FLOPs per sample = Forward + Backward = 3x forward pass
+    - Backward pass FLOPs: approximated as backward_multiplier × forward pass
+    - Total FLOPs per sample = Forward + Backward
     - Total training FLOPs = Total FLOPs per sample × num_samples
-    
-    This follows the widely accepted convention where backward pass
-    requires approximately 2x the FLOPs of forward pass due to gradient
-    computation (as used in papers like "EfficientNet", "Vision Transformer", etc.)
     
     Args:
         forward_flops_per_sample: Forward pass FLOPs for one sample
         num_samples: Total number of training samples processed
+        backward_multiplier: Backward pass cost relative to forward
+                            - Full training: 2.0 (standard assumption)
+                            - LoRA/PEFT: 0.5-1.0 (fewer params to update)
         
     Returns:
         Total training FLOPs (forward + backward) as integer
@@ -225,12 +181,8 @@ def calculate_training_flops(
     if forward_flops_per_sample <= 0 or num_samples <= 0:
         return 0
     
-    # Standard approach: backward pass = 2x forward pass
-    # Total per sample = forward + backward = 3x forward
-    total_flops_per_sample = forward_flops_per_sample * 3
-    total_training_flops = total_flops_per_sample * num_samples
-    
-    return int(total_training_flops)
+    total_flops_per_sample = forward_flops_per_sample * (1 + backward_multiplier)
+    return int(total_flops_per_sample * num_samples)
 
 
 class EnergyTracker:
@@ -258,17 +210,15 @@ class EnergyTracker:
             self.tracker = NvidiaSMIEnergyTracker(output_dir, experiment_name, task_name)
         except Exception as e:
             self.tracker = None
-            import warnings
-            warnings.warn(f"Could not initialize nvidia-smi energy tracker: {e}")
+            logger.warning(f"Could not initialize nvidia-smi energy tracker: {e}")
     
-    def start(self):
+    def start(self) -> None:
         """Start tracking energy consumption."""
         if self.tracker is not None:
             try:
                 self.tracker.start()
             except Exception as e:
-                import warnings
-                warnings.warn(f"Failed to start energy tracker: {e}")
+                logger.warning(f"Failed to start energy tracker: {e}")
     
     def stop(self) -> Dict[str, Any]:
         """
@@ -281,8 +231,7 @@ class EnergyTracker:
             try:
                 return self.tracker.stop()
             except Exception as e:
-                import warnings
-                warnings.warn(f"Failed to stop energy tracker: {e}")
+                logger.warning(f"Failed to stop energy tracker: {e}")
                 return self._get_empty_metrics()
         return self._get_empty_metrics()
     
