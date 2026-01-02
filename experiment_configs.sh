@@ -20,7 +20,7 @@ EXPERIMENTS=()
 
 # Helper function to add experiments with two-level numbering
 # Format: base_name_global_exp_num_per_config_exp_num
-# Example: 35_l_default_1_7 (global exp 1, per-config exp 7)
+# Example: 36_l_default_1_7 (global exp 1, per-config exp 7)
 add_experiments() {
     local base_name=$1
     local eval_head=$2
@@ -39,20 +39,20 @@ add_experiments() {
 }
 
 # Format: add_experiments "base_name" "eval_head" "custom" "pool" "fft" "d_inf" "c_inf" global_exp_num per_config_start per_config_end
-add_experiments "35_l_default" "default_head" "False" "mean" "False" "True" "False" 5 1 10
+add_experiments "36_l_default" "default_head" "False" "mean" "False" "True" "False" 6 1 10
 
-add_experiments "35_l_custom_last" "custom_head" "True" "last" "False" "False" "True" 5 1 10
+add_experiments "36_l_custom_last" "custom_head" "True" "last" "False" "False" "True" 6 1 10
 
-add_experiments "35_l_custom_max" "custom_head" "True" "max" "False" "False" "True" 5 1 10
+add_experiments "36_l_custom_max" "custom_head" "True" "max" "False" "False" "True" 6 1 10
 
-add_experiments "35_l_custom_mean" "custom_head" "True" "mean" "False" "False" "True" 5 1 10
+add_experiments "36_l_custom_mean" "custom_head" "True" "mean" "False" "False" "True" 6 1 10
 
-add_experiments "35_l_custom_attention" "custom_head" "True" "attention" "False" "False" "True" 5 1 10
+add_experiments "36_l_custom_attention" "custom_head" "True" "attention" "False" "False" "True" 6 1 10
 
-add_experiments "35_l_custom_fft_last" "custom_head" "True" "last" "True" "False" "True" 5 1 10
+add_experiments "36_l_custom_fft_last" "custom_head" "True" "last" "True" "False" "True" 6 1 10
 
-add_experiments "35_l_custom_fft_max" "custom_head" "True" "max" "True" "False" "True" 5 1 10
+add_experiments "36_l_custom_fft_max" "custom_head" "True" "max" "True" "False" "True" 6 1 10
 
-add_experiments "35_l_custom_fft_mean" "custom_head" "True" "mean" "True" "False" "True" 5 1 10
+add_experiments "36_l_custom_fft_mean" "custom_head" "True" "mean" "True" "False" "True" 6 1 10
 
-add_experiments "35_l_custom_fft_attention" "custom_head" "True" "attention" "True" "False" "True" 5 1 10
+add_experiments "36_l_custom_fft_attention" "custom_head" "True" "attention" "True" "False" "True" 6 1 10
