@@ -1,10 +1,3 @@
-"""
-Utility functions for tracking FLOPs, memory usage, energy consumption, and carbon footprint.
-
-Uses standard industry tools:
-- thop: For FLOPs calculation
-- nvidia-smi: For GPU energy consumption tracking (works with MIG devices)
-"""
 import torch
 from typing import Dict, Any, Optional, Tuple
 import psutil
@@ -23,15 +16,6 @@ except ImportError:
 
 
 def get_memory_usage(device: Optional[torch.device] = None) -> Dict[str, float]:
-    """
-    Get current memory usage in MB.
-    
-    Args:
-        device: PyTorch device. If None, returns CPU memory.
-        
-    Returns:
-        Dictionary with memory usage metrics in MB.
-    """
     memory_info = {}
     
     if device is not None and device.type == 'cuda':
@@ -52,59 +36,44 @@ def get_memory_usage(device: Optional[torch.device] = None) -> Dict[str, float]:
 
 
 def reset_memory_tracking(device: Optional[torch.device] = None) -> None:
-    """
-    Reset memory tracking counters.
-    
-    Args:
-        device: PyTorch device. If None, resets CPU tracking.
-    """
     if device is not None and device.type == 'cuda' and torch.cuda.is_available():
         torch.cuda.reset_peak_memory_stats(device)
 
 
 def _clear_thop_hooks_and_attributes(model: torch.nn.Module) -> None:
-    """
-    Remove all thop hooks and attributes from a model.
-    
-    This is critical for PEFT/LoRA models to prevent AttributeError
-    during inference after profiling.
-    
-    Args:
-        model: PyTorch model to clean
-    """
-    def _recursive_clean(module):
-        """Recursively clean module and all submodules."""
-        try:
-            # Remove thop attributes (try both hasattr and direct __dict__ check)
-            for attr in ['total_ops', 'total_params']:
-                if hasattr(module, attr):
-                    try:
-                        delattr(module, attr)
-                    except (AttributeError, KeyError, TypeError):
-                        pass
-                # Also check __dict__ directly (for wrapped modules)
-                if hasattr(module, '__dict__') and attr in module.__dict__:
-                    try:
-                        del module.__dict__[attr]
-                    except (AttributeError, KeyError, TypeError):
-                        pass
+    def _recursive_clean(m: torch.nn.Module):
+        # Remove thop buffers/attrs
+        for attr in ("total_ops", "total_params"):
+            try:
+                if hasattr(m, "_buffers") and attr in m._buffers:
+                    m._buffers.pop(attr, None)
+            except Exception:
+                pass
+            try:
+                if hasattr(m, "__dict__") and attr in m.__dict__:
+                    del m.__dict__[attr]
+            except Exception:
+                pass
+            try:
+                if hasattr(m, attr):
+                    delattr(m, attr)
+            except Exception:
+                pass
 
-            # Remove all hooks (safely)
-            if hasattr(module, '_forward_hooks'):
-                module._forward_hooks.clear()
-            if hasattr(module, '_forward_pre_hooks'):
-                module._forward_pre_hooks.clear()
-            if hasattr(module, '_backward_hooks'):
-                module._backward_hooks.clear()
+        # Remove hooks
+        try:
+            if hasattr(m, "_forward_hooks"):
+                m._forward_hooks.clear()
+            if hasattr(m, "_forward_pre_hooks"):
+                m._forward_pre_hooks.clear()
+            if hasattr(m, "_backward_hooks"):
+                m._backward_hooks.clear()
         except Exception:
-            # If cleaning fails for a module, continue with others
             pass
 
-        # Recursively clean children
-        for child in module.children():
+        for child in m.children():
             _recursive_clean(child)
 
-    # Clean the model and all submodules
     try:
         _recursive_clean(model)
     except Exception as e:
@@ -125,59 +94,49 @@ class TransformerModelWrapper(torch.nn.Module):
         return self.model(**kwargs)
 
 
+def estimate_transformer_forward_flops_per_sample(model: torch.nn.Module, seq_len: int) -> int:
+    # Works for LLaMA-like decoder-only blocks (good approximation)
+    cfg = getattr(model, "config", None)
+    if cfg is None and hasattr(model, "base_model"):
+        cfg = getattr(model.base_model, "config", None)
+    if cfg is None:
+        return 0
+
+    L = int(getattr(cfg, "num_hidden_layers", 0) or 0)
+    d = int(getattr(cfg, "hidden_size", 0) or 0)
+    f = int(getattr(cfg, "intermediate_size", 0) or 0)
+    if L <= 0 or d <= 0 or f <= 0 or seq_len <= 0:
+        return 0
+
+    s = int(seq_len)
+
+    # Per-layer forward FLOPs (multiply-add counted as 2 FLOPs):
+    # - Attention projections (Q,K,V,out): 8 * s * d^2
+    # - Attention matmuls (QK^T and AV): 4 * s^2 * d
+    # - Gated MLP (LLaMA): 6 * s * d * f
+    flops_per_layer = (8 * s * d * d) + (4 * s * s * d) + (6 * s * d * f)
+    flops = L * flops_per_layer
+
+    # Add classification head (rough): 2 * d * num_labels
+    num_labels = int(getattr(cfg, "num_labels", 0) or 0)
+    if num_labels > 0:
+        flops += 2 * d * num_labels
+
+    return int(flops)
+
+
 def calculate_flops_for_transformer(
     model: torch.nn.Module,
     input_ids: torch.Tensor,
     attention_mask: Optional[torch.Tensor] = None,
 ) -> int:
-    """
-    Calculate FLOPs for a transformer model with specific inputs.
-
-    This uses the standard industry approach (thop library).
-    Calculates forward pass FLOPs only.
-
-    IMPORTANT: This function cleans up all thop artifacts after profiling
-    to prevent AttributeError with PEFT/LoRA models during subsequent inference.
-
-    Args:
-        model: PyTorch model
-        input_ids: Input token IDs tensor
-        attention_mask: Optional attention mask tensor
-
-    Returns:
-        Number of FLOPs (forward pass only) as integer
-    """
-    if not THOP_AVAILABLE:
-        logger.warning("thop not available, returning 0 FLOPs")
-        return 0
-
-    was_training = model.training
-    model.eval()
-
+    # Return forward FLOPs PER SAMPLE
     try:
-        # Clear any existing thop artifacts before profiling
-        _clear_thop_hooks_and_attributes(model)
-
-        with torch.no_grad():
-            wrapped = TransformerModelWrapper(model)
-            flops, params = profile(
-                wrapped,
-                inputs=(input_ids, attention_mask) if attention_mask is not None else (input_ids,),
-                verbose=False
-            )
-
-        return int(flops)
-
+        seq_len = int(input_ids.shape[1])
+        return estimate_transformer_forward_flops_per_sample(model, seq_len)
     except Exception as e:
-        logger.error(f"Failed to calculate FLOPs: {e}", exc_info=True)
+        logger.warning(f"FLOPs estimate failed: {e}")
         return 0
-    finally:
-        # CRITICAL: Clean up thop artifacts to prevent inference errors
-        _clear_thop_hooks_and_attributes(model)
-
-        # Restore training mode
-        if was_training:
-            model.train()
 
 
 def calculate_training_flops(
@@ -185,25 +144,6 @@ def calculate_training_flops(
     num_samples: int,
     backward_multiplier: float = 2.0,
 ) -> int:
-    """
-    Calculate total training FLOPs using the standard industry approach.
-
-    Standard approach:
-    - Forward pass FLOPs: measured directly
-    - Backward pass FLOPs: approximated as backward_multiplier × forward pass
-    - Total FLOPs per sample = Forward + Backward
-    - Total training FLOPs = Total FLOPs per sample × num_samples
-
-    Args:
-        forward_flops_per_sample: Forward pass FLOPs for one sample
-        num_samples: Total number of training samples processed
-        backward_multiplier: Backward pass cost relative to forward
-                            - Full training: 2.0 (standard assumption)
-                            - LoRA/PEFT: 0.5-1.0 (fewer params to update)
-
-    Returns:
-        Total training FLOPs (forward + backward) as integer
-    """
     if forward_flops_per_sample <= 0 or num_samples <= 0:
         return 0
 
@@ -212,22 +152,7 @@ def calculate_training_flops(
 
 
 class EnergyTracker:
-    """
-    Track energy consumption and CO₂ emissions using nvidia-smi.
-
-    This uses nvidia-smi to query GPU energy counters, which works with MIG devices
-    by reading the parent GPU's energy consumption.
-    """
-
     def __init__(self, output_dir: str, experiment_name: str, task_name: str = "training"):
-        """
-        Initialize energy tracker.
-
-        Args:
-            output_dir: Directory to save energy data (for compatibility, not actively used)
-            experiment_name: Name of the experiment
-            task_name: Name of the task (e.g., "training", "inference")
-        """
         self.output_dir = output_dir
         self.experiment_name = experiment_name
         self.task_name = task_name
@@ -239,7 +164,6 @@ class EnergyTracker:
             logger.warning(f"Could not initialize nvidia-smi energy tracker: {e}")
 
     def start(self) -> None:
-        """Start tracking energy consumption."""
         if self.tracker is not None:
             try:
                 self.tracker.start()
@@ -247,12 +171,6 @@ class EnergyTracker:
                 logger.warning(f"Failed to start energy tracker: {e}")
 
     def stop(self) -> Dict[str, Any]:
-        """
-        Stop tracking and return energy and carbon metrics.
-
-        Returns:
-            Dictionary with energy consumption (kWh) and CO₂ emissions (gCO₂eq)
-        """
         if self.tracker is not None:
             try:
                 return self.tracker.stop()
@@ -262,7 +180,6 @@ class EnergyTracker:
         return self._get_empty_metrics()
 
     def _get_empty_metrics(self) -> Dict[str, Any]:
-        """Return empty metrics when tracking is unavailable."""
         return {
             "energy_consumed_kwh": 0.0,
             "emissions_gco2eq": 0.0,
@@ -277,13 +194,6 @@ class EnergyTracker:
 
     @contextlib.contextmanager
     def track(self):
-        """
-        Context manager for energy tracking.
-
-        Usage:
-            with energy_tracker.track():
-                # Your code here
-        """
         self.start()
         try:
             yield

@@ -1,97 +1,87 @@
-"""
-GPU energy tracking using nvidia-smi.
-Works with MIG devices by querying the parent GPU energy counter.
-"""
 import subprocess
 import time
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any
+import threading
 
 logger = logging.getLogger(__name__)
 
 
 def get_gpu_energy_nvidia_smi() -> Dict[str, Any]:
-    """
-    Get GPU energy consumption using nvidia-smi.
-    Works with MIG devices by querying the parent GPU.
-    
-    Returns:
-        Dictionary with energy metrics
-    """
-    try:
-        # Query energy consumption counter (cumulative since last reset)
-        # This works even with MIG devices
-        result = subprocess.run(
-            ['nvidia-smi', 
-             '--query-gpu=index,uuid,power.draw,power.limit,energy.consumed',
-             '--format=csv,noheader,nounits'],
+    def _run_query(fields: str):
+        return subprocess.run(
+            ["nvidia-smi", f"--query-gpu={fields}", "--format=csv,noheader,nounits"],
             capture_output=True,
             text=True,
-            timeout=5
+            timeout=5,
         )
-        
+
+    try:
+        # 1) Try energy counter (often unsupported -> your return code 2)
+        result = _run_query("index,uuid,power.draw,power.limit,energy.consumed")
+
+        # 2) Fallback: power only (always available on most systems)
+        energy_supported = True
         if result.returncode != 0:
-            logger.warning(f"nvidia-smi failed with return code {result.returncode}: {result.stderr}")
-            return {'success': False, 'error': f'nvidia-smi failed: {result.stderr}'}
-        
+            energy_supported = False
+            result = _run_query("index,uuid,power.draw,power.limit")
+
+        if result.returncode != 0:
+            logger.warning(f"nvidia-smi failed rc={result.returncode} stderr={result.stderr} stdout={result.stdout}")
+            return {"success": False, "error": f"nvidia-smi failed: {result.stderr or result.stdout}"}
+
         if not result.stdout.strip():
             logger.warning("nvidia-smi returned empty output")
-            return {'success': False, 'error': 'empty output'}
-        
-        lines = result.stdout.strip().split('\n')
-        for line in lines:
-            parts = [p.strip() for p in line.split(',')]
-            if len(parts) >= 5:
-                try:
-                    gpu_idx = int(parts[0])
-                    gpu_uuid = parts[1]
-                    power_draw = float(parts[2])  # Current power draw in Watts
-                    power_limit = float(parts[3])  # Power limit in Watts
-                    energy_consumed_mj = float(parts[4])  # Cumulative energy in mJ (millijoules)
-                    
-                    # Convert mJ to kWh: 1 kWh = 3,600,000,000 mJ
-                    energy_kwh = energy_consumed_mj / 3_600_000_000.0
-                    
-                    return {
-                        'gpu_index': gpu_idx,
-                        'gpu_uuid': gpu_uuid,
-                        'power_draw_watts': power_draw,
-                        'power_limit_watts': power_limit,
-                        'energy_consumed_mj': energy_consumed_mj,
-                        'energy_consumed_kwh': energy_kwh,
-                        'success': True,
-                    }
-                except (ValueError, IndexError) as e:
-                    logger.warning(f"Failed to parse nvidia-smi output line '{line}': {e}")
-                    continue
+            return {"success": False, "error": "empty output"}
+
+        line = result.stdout.strip().split("\n")[0]
+        parts = [p.strip() for p in line.split(",")]
+
+        gpu_idx = int(parts[0])
+        gpu_uuid = parts[1]
+
+        def _to_float(x: str):
+            x = x.strip()
+            if x in {"[N/A]", "N/A", ""}:
+                return None
+            try:
+                return float(x)
+            except ValueError:
+                return None
+
+        power_draw = _to_float(parts[2])
+        power_limit = _to_float(parts[3])
+
+        energy_mj = None
+        if energy_supported and len(parts) >= 5:
+            try:
+                energy_mj = float(parts[4])
+            except ValueError:
+                energy_mj = None
+
+        return {
+            "gpu_index": gpu_idx,
+            "gpu_uuid": gpu_uuid,
+            "power_draw_watts": power_draw,  # may be None
+            "power_limit_watts": power_limit,  # may be None
+            "energy_consumed_mj": energy_mj,  # may be None
+            "energy_counter_supported": energy_mj is not None,
+            "success": True,
+        }
+
     except subprocess.TimeoutExpired:
         logger.warning("nvidia-smi command timed out")
-        return {'success': False, 'error': 'timeout'}
+        return {"success": False, "error": "timeout"}
     except FileNotFoundError:
         logger.warning("nvidia-smi command not found")
-        return {'success': False, 'error': 'nvidia-smi not found'}
+        return {"success": False, "error": "nvidia-smi not found"}
     except Exception as e:
         logger.warning(f"Error calling nvidia-smi: {e}", exc_info=True)
-        return {'success': False, 'error': str(e)}
-    
-    return {'success': False, 'error': 'no valid GPU data found'}
+        return {"success": False, "error": str(e)}
 
 
 class NvidiaSMIEnergyTracker:
-    """
-    Track GPU energy consumption using nvidia-smi.
-    Works with MIG devices by reading parent GPU energy counter.
-    """
-    
     def __init__(self, output_dir: str, experiment_name: str, task_name: str = "training"):
-        """
-        Initialize nvidia-smi energy tracker.
-        
-        Args:
-            output_dir: Directory to save energy data (for compatibility, not used)
-            experiment_name: Name of the experiment (for logging)
-            task_name: Name of the task (e.g., "training", "inference")
-        """
         self.output_dir = output_dir
         self.experiment_name = experiment_name
         self.task_name = task_name
@@ -99,80 +89,84 @@ class NvidiaSMIEnergyTracker:
         self.final_energy_mj = None
         self.start_time = None
         self.end_time = None
-    
+        self._use_energy_counter = False
+        self._stop_evt = None
+        self._thread = None
+        self._energy_joules = 0.0
+        self._last_t = None
+
     def start(self):
-        """Record initial energy reading."""
         self.start_time = time.time()
+
         energy_data = get_gpu_energy_nvidia_smi()
-        if energy_data.get('success'):
-            self.initial_energy_mj = energy_data.get('energy_consumed_mj', 0.0)
-            logger.info(f"Started energy tracking: initial energy = {self.initial_energy_mj:.2f} mJ")
-        else:
-            self.initial_energy_mj = None
-            error_msg = energy_data.get('error', 'unknown error')
-            logger.warning(f"Failed to start energy tracking: {error_msg}")
+        if energy_data.get("success") and energy_data.get("energy_counter_supported"):
+            self._use_energy_counter = True
+            self.initial_energy_mj = energy_data.get("energy_consumed_mj", 0.0)
+            logger.info(f"Started energy tracking (counter): initial={self.initial_energy_mj:.2f} mJ")
+            return
+
+        # Fallback: integrate power.draw over time
+        self._use_energy_counter = False
+        self.initial_energy_mj = None
+        self._energy_joules = 0.0
+        self._last_t = time.time()
+        self._stop_evt = threading.Event()
+
+        def _sampler():
+            while not self._stop_evt.is_set():
+                now = time.time()
+                dt = now - (self._last_t or now)
+                self._last_t = now
+
+                d = get_gpu_energy_nvidia_smi()
+                if d.get("success"):
+                    p = d.get("power_draw_watts")
+                    if isinstance(p, (int, float)) and dt > 0:
+                        self._energy_joules += float(p) * float(dt)
+
+                time.sleep(0.5)
+
+        self._thread = threading.Thread(target=_sampler, daemon=True)
+        self._thread.start()
+        logger.info("Started energy tracking (integrating power.draw)")
     
     def stop(self) -> Dict[str, Any]:
-        """
-        Record final energy reading and calculate consumption.
-        
-        Returns:
-            Dictionary with energy metrics in kWh
-        """
         self.end_time = time.time()
-        energy_data = get_gpu_energy_nvidia_smi()
-        
-        if energy_data.get('success') and self.initial_energy_mj is not None:
-            self.final_energy_mj = energy_data.get('energy_consumed_mj', 0.0)
-            
-            # Calculate energy consumed during tracking period
-            energy_delta_mj = self.final_energy_mj - self.initial_energy_mj
-            
-            logger.info(f"Energy tracking: initial={self.initial_energy_mj:.2f} mJ, final={self.final_energy_mj:.2f} mJ, delta={energy_delta_mj:.2f} mJ")
-            
-            # Convert mJ to kWh
-            energy_kwh = energy_delta_mj / 3_600_000_000.0
-            
-            duration_seconds = self.end_time - self.start_time if self.start_time else 0.0
-            
-            # Estimate CPU/RAM energy (rough estimate: 10% of total for CPU-heavy ML jobs)
-            # For GPU jobs, most energy is GPU, so this is conservative
-            cpu_energy_kwh = energy_kwh * 0.1  # Estimate
-            ram_energy_kwh = energy_kwh * 0.05  # Estimate
-            
-            # Calculate carbon footprint (Canada average: ~150 gCO₂eq/kWh)
-            # Adjust based on your province if known
-            grid_intensity = 150.0  # gCO₂eq/kWh (Canada average)
-            total_energy_estimate = energy_kwh * 1.15  # Add 15% for CPU/RAM
-            emissions = total_energy_estimate * grid_intensity
-            emissions_per_hour = emissions / (duration_seconds / 3600.0) if duration_seconds > 0 else 0.0
-            
-            return {
-                'energy_consumed_kwh': total_energy_estimate,
-                'gpu_energy_kwh': energy_kwh,
-                'cpu_energy_kwh': cpu_energy_kwh,
-                'ram_energy_kwh': ram_energy_kwh,
-                'duration_seconds': duration_seconds,
-                'emissions_gco2eq': emissions,
-                'emissions_rate_gco2eq_per_hour': emissions_per_hour,
-                'country_name': 'Canada',
-                'region': 'unknown',
-                'source': 'nvidia_smi',
-                'initial_energy_mj': self.initial_energy_mj,
-                'final_energy_mj': self.final_energy_mj,
-            }
-        
-        # Return empty metrics if tracking failed
-        return {
-            'energy_consumed_kwh': 0.0,
-            'gpu_energy_kwh': 0.0,
-            'cpu_energy_kwh': 0.0,
-            'ram_energy_kwh': 0.0,
-            'duration_seconds': 0.0,
-            'emissions_gco2eq': 0.0,
-            'emissions_rate_gco2eq_per_hour': 0.0,
-            'country_name': 'unknown',
-            'region': 'unknown',
-            'source': 'nvidia_smi_failed',
-        }
+        duration_seconds = self.end_time - self.start_time if self.start_time else 0.0
 
+        if self._use_energy_counter:
+            energy_data = get_gpu_energy_nvidia_smi()
+            if energy_data.get("success") and self.initial_energy_mj is not None:
+                self.final_energy_mj = energy_data.get("energy_consumed_mj", 0.0)
+                energy_delta_mj = self.final_energy_mj - self.initial_energy_mj
+                energy_kwh = energy_delta_mj / 3_600_000_000.0
+            else:
+                energy_kwh = 0.0
+        else:
+            if self._stop_evt is not None:
+                self._stop_evt.set()
+            if self._thread is not None:
+                self._thread.join(timeout=2)
+            energy_kwh = self._energy_joules / 3_600_000.0  # J -> Wh (3600), then /1000 -> kWh
+
+        cpu_energy_kwh = energy_kwh * 0.1
+        ram_energy_kwh = energy_kwh * 0.05
+        grid_intensity = 150.0
+        total_energy_estimate = energy_kwh * 1.15
+        emissions = total_energy_estimate * grid_intensity
+        emissions_per_hour = emissions / (duration_seconds / 3600.0) if duration_seconds > 0 else 0.0
+
+        return {
+            "energy_consumed_kwh": total_energy_estimate,
+            "gpu_energy_kwh": energy_kwh,
+            "cpu_energy_kwh": cpu_energy_kwh,
+            "ram_energy_kwh": ram_energy_kwh,
+            "duration_seconds": duration_seconds,
+            "emissions_gco2eq": emissions,
+            "emissions_rate_gco2eq_per_hour": emissions_per_hour,
+            "country_name": "Canada",
+            "region": "unknown",
+            "source": "nvidia_smi",
+            "initial_energy_mj": self.initial_energy_mj,
+            "final_energy_mj": self.final_energy_mj,
+        }

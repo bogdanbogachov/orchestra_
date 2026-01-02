@@ -8,6 +8,7 @@ from commands.training.dataset import ClassificationDataset
 from commands.training.model import load_model_and_tokenizer, setup_lora
 from commands.training.seed_utils import set_seed
 from commands.training.metrics_callback import TrainingMetricsCallback
+from commands.utils.metrics import calculate_flops_for_transformer
 from logger_config import logger
 
 def load_data(data_path: str):
@@ -98,6 +99,7 @@ def run_finetune():
         'metric_for_best_model': training_config.get('metric_for_best_model', 'eval_loss'),
         'greater_is_better': training_config.get('greater_is_better', False),
         'fp16': training_config.get('fp16', True) and torch.cuda.is_available(),
+        'report_to': 'none'
     }
     
     # Only include seed if it's not None
@@ -128,6 +130,19 @@ def run_finetune():
         data_collator=data_collator,
         callbacks=[early_stopping_callback, metrics_callback],
     )
+
+    # Precompute FLOPs once from first train batch (reliable)
+    try:
+        dl = trainer.get_train_dataloader()
+        first = next(iter(dl))
+        input_ids = first["input_ids"]
+        attn = first.get("attention_mask")
+
+        metrics_callback.flops_per_sample = calculate_flops_for_transformer(trainer.model, input_ids, attn)
+        metrics_callback.flops_calculated = True
+        logger.info(f"  Precomputed forward FLOPs per sample: {metrics_callback.flops_per_sample:,}")
+    except Exception as e:
+        logger.warning(f"  Could not precompute FLOPs: {e}")
 
     trainer.train()
 

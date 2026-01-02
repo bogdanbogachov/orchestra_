@@ -1,11 +1,3 @@
-"""
-Custom callback for tracking FLOPs and memory usage during training.
-
-Uses the standard industry approach for FLOPs calculation:
-- Forward pass FLOPs: Measured directly using thop library
-- Backward pass FLOPs: 2x forward pass (standard assumption in papers)
-- Total training FLOPs = (Forward + Backward) × num_samples = 3 × Forward × num_samples
-"""
 import json
 import os
 import torch
@@ -21,17 +13,7 @@ from commands.utils.metrics import (
 
 
 class TrainingMetricsCallback(TrainerCallback):
-    """
-    Callback to track FLOPs and peak memory usage during training.
-    """
-    
     def __init__(self, output_dir: str):
-        """
-        Initialize the callback.
-        
-        Args:
-            output_dir: Directory to save training metrics JSON file
-        """
         self.output_dir = output_dir
         self.metrics_file = os.path.join(output_dir, "training_metrics.json")
         self.flops_per_sample = 0
@@ -44,7 +26,6 @@ class TrainingMetricsCallback(TrainerCallback):
         self._samples_counted_via_substep = False  # Track if we're using substep counting
         
     def on_train_begin(self, args, state, control, model=None, **kwargs):
-        """Called at the beginning of training."""
         # Get device from model
         if model is not None:
             try:
@@ -70,80 +51,69 @@ class TrainingMetricsCallback(TrainerCallback):
                 logger.warning(f"Could not initialize energy tracker: {e}")
                 self.energy_tracker = None
                 logger.info("✓ Started tracking training metrics (FLOPs and memory)")
-    
-    def on_step_begin(self, args, state, control, model=None, inputs=None, **kwargs):
-        """Called at the beginning of each training step."""
-        if model is None or inputs is None:
+
+    def on_train_batch_begin(self, args, state, control, model=None, inputs=None, **kwargs):
+        if self.flops_calculated or model is None or inputs is None:
             return
-        
-        # Calculate FLOPs on the first step
-        if not self.flops_calculated and state.global_step == 0:
-            try:
-                # Extract input_ids and attention_mask from inputs
-                input_ids = inputs.get('input_ids')
-                attention_mask = inputs.get('attention_mask')
-                
-                if input_ids is not None:
-                    # For custom head models, we need to handle differently
-                    # Check if model has base_model attribute (custom head)
-                    if hasattr(model, 'base_model'):
-                        # Calculate FLOPs for base model
-                        base_flops = calculate_flops_for_transformer(
-                            model.base_model, input_ids, attention_mask
-                        )
-                        
-                        # Try to calculate classifier FLOPs
-                        try:
-                            from thop import profile
-                            with torch.no_grad():
-                                base_outputs = model.base_model(input_ids=input_ids, attention_mask=attention_mask)
-                                hidden_states = base_outputs.last_hidden_state
-                                # Profile classifier forward pass
-                                classifier_flops, _ = profile(
-                                    model.classifier,
-                                    inputs=(hidden_states, attention_mask),
-                                    verbose=False
-                                )
-                            self.flops_per_sample = int(base_flops + classifier_flops)
-                        except Exception:
-                            # Fallback: just use base model FLOPs
-                            self.flops_per_sample = int(base_flops)
-                    else:
-                        # Default head model
-                        self.flops_per_sample = calculate_flops_for_transformer(
-                            model, input_ids, attention_mask
-                        )
-                    
-                    logger.info(f"  Calculated forward FLOPs per sample: {self.flops_per_sample:,}")
-                    logger.info(f"  (Using standard industry approach: backward = 2x forward)")
-                    self.flops_calculated = True
-            except Exception as e:
-                logger.warning(f"  Could not calculate training FLOPs: {e}")
-                self.flops_per_sample = 0
-                self.flops_calculated = True  # Don't try again
-    
+
+        input_ids = inputs.get("input_ids") if isinstance(inputs, dict) else None
+        attention_mask = inputs.get("attention_mask") if isinstance(inputs, dict) else None
+        if input_ids is None:
+            return
+
+        try:
+            # IMPORTANT: unwrap accelerate/DDP wrappers
+            real_model = model
+            if hasattr(model, "module"):
+                real_model = model.module
+
+            # If it's PEFT, base_model exists; but for FLOPs just profile the whole forward
+            self.flops_per_sample = int(calculate_flops_for_transformer(real_model, input_ids, attention_mask))
+            logger.info(f"  Calculated forward FLOPs per sample: {self.flops_per_sample:,}")
+        except Exception as e:
+            logger.warning(f"  Could not calculate training FLOPs: {e}")
+            self.flops_per_sample = 0
+        finally:
+            self.flops_calculated = True
+
     def on_substep_end(self, args, state, control, model=None, inputs=None, **kwargs):
-        """Called at the end of each gradient accumulation substep."""
-        # Track samples processed in each substep using actual batch size (most accurate method)
-        if inputs is not None:
-            if isinstance(inputs, dict):
-                # Try to get batch size from input_ids or any tensor
-                if 'input_ids' in inputs and inputs['input_ids'] is not None:
-                    actual_batch_size = inputs['input_ids'].shape[0]
-                    self.total_samples_processed += actual_batch_size
-                    self._samples_counted_via_substep = True
-                    return
-                else:
-                    # Try to find any tensor to get batch size
-                    for key, value in inputs.items():
-                        if isinstance(value, torch.Tensor) and value.dim() > 0:
-                            actual_batch_size = value.shape[0]
-                            self.total_samples_processed += actual_batch_size
-                            self._samples_counted_via_substep = True
-                            return
-    
+        if inputs is None or not isinstance(inputs, dict):
+            return
+
+        # --- FLOPs: compute once, as soon as we have real tensors ---
+        if (not self.flops_calculated) and (model is not None):
+            input_ids = inputs.get("input_ids")
+            attention_mask = inputs.get("attention_mask")
+
+            if input_ids is not None:
+                try:
+                    # If it's a custom-head model, profile base_model (stable)
+                    target = model.base_model if hasattr(model, "base_model") else model
+                    self.flops_per_sample = int(
+                        calculate_flops_for_transformer(target, input_ids, attention_mask)
+                    )
+                    logger.info(f"  Calculated forward FLOPs per sample: {self.flops_per_sample:,}")
+                except Exception as e:
+                    logger.warning(f"  Could not calculate training FLOPs: {e}")
+                    self.flops_per_sample = 0
+                finally:
+                    self.flops_calculated = True  # don't try again
+
+        # --- Sample counting (your existing logic) ---
+        if "input_ids" in inputs and inputs["input_ids"] is not None:
+            actual_batch_size = inputs["input_ids"].shape[0]
+            self.total_samples_processed += actual_batch_size
+            self._samples_counted_via_substep = True
+            return
+
+        for _, value in inputs.items():
+            if isinstance(value, torch.Tensor) and value.dim() > 0:
+                actual_batch_size = value.shape[0]
+                self.total_samples_processed += actual_batch_size
+                self._samples_counted_via_substep = True
+                return
+
     def on_step_end(self, args, state, control, model=None, **kwargs):
-        """Called at the end of each training step (after all gradient accumulation)."""
         if self.device is not None:
             # Track peak memory usage
             memory_info = get_memory_usage(self.device)
@@ -187,7 +157,6 @@ class TrainingMetricsCallback(TrainerCallback):
                     self.total_samples_processed += samples_this_step
     
     def on_train_end(self, args, state, control, model=None, **kwargs):
-        """Called at the end of training."""
         # Get final memory stats
         final_memory_info = get_memory_usage(self.device) if self.device is not None else {}
         
@@ -262,4 +231,3 @@ class TrainingMetricsCallback(TrainerCallback):
             if self.total_samples_processed > 0:
                 energy_per_sample = energy_kwh / self.total_samples_processed
                 logger.info(f"  Energy per sample: {energy_per_sample:.6f} kWh")
-
