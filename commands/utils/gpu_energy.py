@@ -4,8 +4,10 @@ Works with MIG devices by querying the parent GPU energy counter.
 """
 import subprocess
 import time
-import os
+import logging
 from typing import Dict, Any, Optional
+
+logger = logging.getLogger(__name__)
 
 
 def get_gpu_energy_nvidia_smi() -> Dict[str, Any]:
@@ -28,11 +30,19 @@ def get_gpu_energy_nvidia_smi() -> Dict[str, Any]:
             timeout=5
         )
         
-        if result.returncode == 0 and result.stdout.strip():
-            lines = result.stdout.strip().split('\n')
-            for line in lines:
-                parts = [p.strip() for p in line.split(',')]
-                if len(parts) >= 5:
+        if result.returncode != 0:
+            logger.warning(f"nvidia-smi failed with return code {result.returncode}: {result.stderr}")
+            return {'success': False, 'error': f'nvidia-smi failed: {result.stderr}'}
+        
+        if not result.stdout.strip():
+            logger.warning("nvidia-smi returned empty output")
+            return {'success': False, 'error': 'empty output'}
+        
+        lines = result.stdout.strip().split('\n')
+        for line in lines:
+            parts = [p.strip() for p in line.split(',')]
+            if len(parts) >= 5:
+                try:
                     gpu_idx = int(parts[0])
                     gpu_uuid = parts[1]
                     power_draw = float(parts[2])  # Current power draw in Watts
@@ -51,10 +61,20 @@ def get_gpu_energy_nvidia_smi() -> Dict[str, Any]:
                         'energy_consumed_kwh': energy_kwh,
                         'success': True,
                     }
+                except (ValueError, IndexError) as e:
+                    logger.warning(f"Failed to parse nvidia-smi output line '{line}': {e}")
+                    continue
+    except subprocess.TimeoutExpired:
+        logger.warning("nvidia-smi command timed out")
+        return {'success': False, 'error': 'timeout'}
+    except FileNotFoundError:
+        logger.warning("nvidia-smi command not found")
+        return {'success': False, 'error': 'nvidia-smi not found'}
     except Exception as e:
-        pass
+        logger.warning(f"Error calling nvidia-smi: {e}", exc_info=True)
+        return {'success': False, 'error': str(e)}
     
-    return {'success': False}
+    return {'success': False, 'error': 'no valid GPU data found'}
 
 
 class NvidiaSMIEnergyTracker:
@@ -86,8 +106,11 @@ class NvidiaSMIEnergyTracker:
         energy_data = get_gpu_energy_nvidia_smi()
         if energy_data.get('success'):
             self.initial_energy_mj = energy_data.get('energy_consumed_mj', 0.0)
+            logger.info(f"Started energy tracking: initial energy = {self.initial_energy_mj:.2f} mJ")
         else:
             self.initial_energy_mj = None
+            error_msg = energy_data.get('error', 'unknown error')
+            logger.warning(f"Failed to start energy tracking: {error_msg}")
     
     def stop(self) -> Dict[str, Any]:
         """
@@ -104,6 +127,8 @@ class NvidiaSMIEnergyTracker:
             
             # Calculate energy consumed during tracking period
             energy_delta_mj = self.final_energy_mj - self.initial_energy_mj
+            
+            logger.info(f"Energy tracking: initial={self.initial_energy_mj:.2f} mJ, final={self.final_energy_mj:.2f} mJ, delta={energy_delta_mj:.2f} mJ")
             
             # Convert mJ to kWh
             energy_kwh = energy_delta_mj / 3_600_000_000.0

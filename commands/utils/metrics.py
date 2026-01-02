@@ -72,26 +72,52 @@ def _clear_thop_hooks_and_attributes(model: torch.nn.Module) -> None:
     Args:
         model: PyTorch model to clean
     """
-    for module in model.modules():
-        # Remove thop attributes
-        if hasattr(module, 'total_ops'):
-            delattr(module, 'total_ops')
-        if hasattr(module, 'total_params'):
-            delattr(module, 'total_params')
-        
-        # Remove all hooks (thop registers forward hooks)
-        module._forward_hooks.clear()
-        module._forward_pre_hooks.clear()
-        module._backward_hooks.clear()
+    def _recursive_clean(module):
+        """Recursively clean module and all submodules."""
+        try:
+            # Remove thop attributes (try both hasattr and direct __dict__ check)
+            for attr in ['total_ops', 'total_params']:
+                if hasattr(module, attr):
+                    try:
+                        delattr(module, attr)
+                    except (AttributeError, KeyError, TypeError):
+                        pass
+                # Also check __dict__ directly (for wrapped modules)
+                if hasattr(module, '__dict__') and attr in module.__dict__:
+                    try:
+                        del module.__dict__[attr]
+                    except (AttributeError, KeyError, TypeError):
+                        pass
+
+            # Remove all hooks (safely)
+            if hasattr(module, '_forward_hooks'):
+                module._forward_hooks.clear()
+            if hasattr(module, '_forward_pre_hooks'):
+                module._forward_pre_hooks.clear()
+            if hasattr(module, '_backward_hooks'):
+                module._backward_hooks.clear()
+        except Exception:
+            # If cleaning fails for a module, continue with others
+            pass
+
+        # Recursively clean children
+        for child in module.children():
+            _recursive_clean(child)
+
+    # Clean the model and all submodules
+    try:
+        _recursive_clean(model)
+    except Exception as e:
+        logger.warning(f"Error during thop cleanup: {e}")
 
 
 class TransformerModelWrapper(torch.nn.Module):
     """Wrapper to handle keyword arguments for thop profiling."""
-    
+
     def __init__(self, base_model):
         super().__init__()
         self.model = base_model
-    
+
     def forward(self, input_ids, attention_mask=None):
         kwargs = {'input_ids': input_ids}
         if attention_mask is not None:
@@ -106,32 +132,32 @@ def calculate_flops_for_transformer(
 ) -> int:
     """
     Calculate FLOPs for a transformer model with specific inputs.
-    
+
     This uses the standard industry approach (thop library).
     Calculates forward pass FLOPs only.
-    
+
     IMPORTANT: This function cleans up all thop artifacts after profiling
     to prevent AttributeError with PEFT/LoRA models during subsequent inference.
-    
+
     Args:
         model: PyTorch model
         input_ids: Input token IDs tensor
         attention_mask: Optional attention mask tensor
-        
+
     Returns:
         Number of FLOPs (forward pass only) as integer
     """
     if not THOP_AVAILABLE:
         logger.warning("thop not available, returning 0 FLOPs")
         return 0
-    
+
     was_training = model.training
     model.eval()
-    
+
     try:
         # Clear any existing thop artifacts before profiling
         _clear_thop_hooks_and_attributes(model)
-        
+
         with torch.no_grad():
             wrapped = TransformerModelWrapper(model)
             flops, params = profile(
@@ -139,16 +165,16 @@ def calculate_flops_for_transformer(
                 inputs=(input_ids, attention_mask) if attention_mask is not None else (input_ids,),
                 verbose=False
             )
-            
+
         return int(flops)
-        
+
     except Exception as e:
         logger.error(f"Failed to calculate FLOPs: {e}", exc_info=True)
         return 0
     finally:
         # CRITICAL: Clean up thop artifacts to prevent inference errors
         _clear_thop_hooks_and_attributes(model)
-        
+
         # Restore training mode
         if was_training:
             model.train()
@@ -161,26 +187,26 @@ def calculate_training_flops(
 ) -> int:
     """
     Calculate total training FLOPs using the standard industry approach.
-    
+
     Standard approach:
     - Forward pass FLOPs: measured directly
     - Backward pass FLOPs: approximated as backward_multiplier × forward pass
     - Total FLOPs per sample = Forward + Backward
     - Total training FLOPs = Total FLOPs per sample × num_samples
-    
+
     Args:
         forward_flops_per_sample: Forward pass FLOPs for one sample
         num_samples: Total number of training samples processed
         backward_multiplier: Backward pass cost relative to forward
                             - Full training: 2.0 (standard assumption)
                             - LoRA/PEFT: 0.5-1.0 (fewer params to update)
-        
+
     Returns:
         Total training FLOPs (forward + backward) as integer
     """
     if forward_flops_per_sample <= 0 or num_samples <= 0:
         return 0
-    
+
     total_flops_per_sample = forward_flops_per_sample * (1 + backward_multiplier)
     return int(total_flops_per_sample * num_samples)
 
@@ -188,15 +214,15 @@ def calculate_training_flops(
 class EnergyTracker:
     """
     Track energy consumption and CO₂ emissions using nvidia-smi.
-    
+
     This uses nvidia-smi to query GPU energy counters, which works with MIG devices
     by reading the parent GPU's energy consumption.
     """
-    
+
     def __init__(self, output_dir: str, experiment_name: str, task_name: str = "training"):
         """
         Initialize energy tracker.
-        
+
         Args:
             output_dir: Directory to save energy data (for compatibility, not actively used)
             experiment_name: Name of the experiment
@@ -211,7 +237,7 @@ class EnergyTracker:
         except Exception as e:
             self.tracker = None
             logger.warning(f"Could not initialize nvidia-smi energy tracker: {e}")
-    
+
     def start(self) -> None:
         """Start tracking energy consumption."""
         if self.tracker is not None:
@@ -219,11 +245,11 @@ class EnergyTracker:
                 self.tracker.start()
             except Exception as e:
                 logger.warning(f"Failed to start energy tracker: {e}")
-    
+
     def stop(self) -> Dict[str, Any]:
         """
         Stop tracking and return energy and carbon metrics.
-        
+
         Returns:
             Dictionary with energy consumption (kWh) and CO₂ emissions (gCO₂eq)
         """
@@ -234,7 +260,7 @@ class EnergyTracker:
                 logger.warning(f"Failed to stop energy tracker: {e}")
                 return self._get_empty_metrics()
         return self._get_empty_metrics()
-    
+
     def _get_empty_metrics(self) -> Dict[str, Any]:
         """Return empty metrics when tracking is unavailable."""
         return {
@@ -248,12 +274,12 @@ class EnergyTracker:
             "country_name": "unknown",
             "region": "unknown",
         }
-    
+
     @contextlib.contextmanager
     def track(self):
         """
         Context manager for energy tracking.
-        
+
         Usage:
             with energy_tracker.track():
                 # Your code here
