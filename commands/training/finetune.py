@@ -99,7 +99,10 @@ def run_finetune():
         'metric_for_best_model': training_config.get('metric_for_best_model', 'eval_loss'),
         'greater_is_better': training_config.get('greater_is_better', False),
         'fp16': training_config.get('fp16', True) and torch.cuda.is_available(),
-        'report_to': 'none'
+        'report_to': 'none',
+        # Reduce checkpoint size: only save model weights (skip optimizer/scheduler/RNG states)
+        'save_only_model': True,
+        'save_safetensors': True,  # Use safetensors format (more efficient and secure)
     }
     
     # Only include seed if it's not None
