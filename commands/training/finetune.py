@@ -134,6 +134,38 @@ def run_finetune():
         callbacks=[early_stopping_callback, metrics_callback],
     )
 
+    # Override Trainer's _save method for custom head models to use save_pretrained
+    # This ensures checkpoints only save PEFT adapters, not the full 5GB base model
+    if use_custom_head:
+        original_save = trainer._save
+        
+        def custom_save(output_dir=None, state_dict=None):
+            """Custom save that uses model.save_pretrained() for custom head models."""
+            if output_dir is None:
+                output_dir = trainer.args.output_dir
+            
+            # Use the model's save_pretrained method which saves only PEFT adapters + classifier
+            if hasattr(model, 'save_pretrained'):
+                model.save_pretrained(
+                    output_dir,
+                    safe_serialization=training_args.save_safetensors
+                )
+                # Still need to save training args and tokenizer
+                # TRAINING_ARGS_NAME = "training_args.bin" (from transformers)
+                torch.save(trainer.args, os.path.join(output_dir, "training_args.bin"))
+                if trainer.processing_class is not None:
+                    trainer.processing_class.save_pretrained(output_dir)
+                elif (trainer.data_collator is not None and 
+                      hasattr(trainer.data_collator, "tokenizer") and 
+                      trainer.data_collator.tokenizer is not None):
+                    trainer.data_collator.tokenizer.save_pretrained(output_dir)
+            else:
+                # Fallback to original method
+                original_save(output_dir, state_dict=state_dict)
+        
+        trainer._save = custom_save
+        logger.info("✓ Overrode Trainer save method to use PEFT adapter-only checkpoints")
+
     # Precompute FLOPs once from first train batch (reliable)
     try:
         dl = trainer.get_train_dataloader()
@@ -150,10 +182,9 @@ def run_finetune():
     trainer.train()
 
     if use_custom_head:
-        model.base_model.save_pretrained(output_dir)
-        classifier_path = f"{output_dir}/classifier.pt"
-        torch.save(model.classifier.state_dict(), classifier_path)
-        logger.info(f"✓ Saved custom classifier to {classifier_path}")
+        # Use the custom save_pretrained method which saves only PEFT adapters + classifier
+        model.save_pretrained(output_dir, safe_serialization=training_args.save_safetensors)
+        logger.info(f"✓ Saved custom model (PEFT adapters + classifier) to {output_dir}")
     else:
         trainer.save_model()
         logger.info(f"✓ Saved default head model with finetuned score layer to {output_dir}")

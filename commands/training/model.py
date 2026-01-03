@@ -1,4 +1,5 @@
 import torch
+import os
 from transformers import (
     AutoTokenizer,
     AutoModelForSequenceClassification,
@@ -31,6 +32,28 @@ class CustomClassificationModel(torch.nn.Module):
             logits=result['logits'],
             loss=result['loss']
         )
+    
+    def save_pretrained(self, save_directory, safe_serialization=True, **kwargs):
+        """
+        Save only PEFT adapters and classifier, not the full base model.
+        This ensures checkpoints are small (only LoRA weights + classifier).
+        """
+        os.makedirs(save_directory, exist_ok=True)
+        
+        # Save PEFT adapters (only LoRA weights, not full base model)
+        # This will save adapter_model.safetensors (or .bin) which is tiny
+        if hasattr(self.base_model, 'save_pretrained'):
+            self.base_model.save_pretrained(
+                save_directory,
+                safe_serialization=safe_serialization,
+                **kwargs
+            )
+        else:
+            logger.warning("base_model does not have save_pretrained method, skipping adapter save")
+        
+        # Save classifier separately
+        classifier_path = os.path.join(save_directory, "classifier.pt")
+        torch.save(self.classifier.state_dict(), classifier_path)
 
 
 def load_model_and_tokenizer():
