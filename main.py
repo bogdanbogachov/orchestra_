@@ -4,6 +4,7 @@ from commands.training.finetune import run_finetune
 from commands.inference.default import run_infer_default
 from commands.inference.custom import run_infer_custom
 from commands.evaluation.evaluate import run_evaluation
+from commands.evaluation.aggregate_results import run_aggregate_results
 from config import CONFIG
 from logger_config import logger
 
@@ -42,3 +43,9 @@ if __name__ == '__main__':
         logger.info("STEP: EVALUATE")
         logger.info("=" * 100)
         run_evaluation()
+    
+    if args.aggregate_results:
+        logger.info("=" * 100)
+        logger.info("STEP: AGGREGATE RESULTS")
+        logger.info("=" * 100)
+        run_aggregate_results()

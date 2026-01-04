@@ -10,4 +10,5 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--infer_default", type=str_to_bool, default=False)
     parser.add_argument("--infer_custom", type=str_to_bool, default=False)
     parser.add_argument("--evaluate", type=str_to_bool, default=False)
+    parser.add_argument("--aggregate_results", type=str_to_bool, default=False)
     return parser
