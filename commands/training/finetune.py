@@ -134,37 +134,81 @@ def run_finetune():
         callbacks=[early_stopping_callback, metrics_callback],
     )
 
-    # Override Trainer's _save method for custom head models to use save_pretrained
+    # Override Trainer's _save method for custom head models with optimized direct save
     # This ensures checkpoints only save PEFT adapters, not the full 5GB base model
+    # Optimized to avoid save_pretrained overhead for faster checkpoint saving
     if use_custom_head:
         original_save = trainer._save
         
         def custom_save(output_dir=None, state_dict=None):
-            """Custom save that uses model.save_pretrained() for custom head models."""
+            """Optimized save that directly extracts PEFT adapters + classifier state dict."""
             if output_dir is None:
                 output_dir = trainer.args.output_dir
             
-            # Use the model's save_pretrained method which saves only PEFT adapters + classifier
-            if hasattr(model, 'save_pretrained'):
-                model.save_pretrained(
-                    output_dir,
-                    safe_serialization=training_args.save_safetensors
+            os.makedirs(output_dir, exist_ok=True)
+            
+            try:
+                # Directly get PEFT adapter state dict (faster than full save_pretrained)
+                from peft import get_peft_model_state_dict
+                import safetensors.torch
+                
+                # Get only PEFT adapter weights (not full base model)
+                active_adapter = getattr(model.base_model, 'active_adapter', "default")
+                if isinstance(active_adapter, list):
+                    active_adapter = active_adapter[0] if active_adapter else "default"
+                
+                peft_state_dict = get_peft_model_state_dict(
+                    model.base_model,
+                    adapter_name=active_adapter
                 )
-                # Still need to save training args and tokenizer
-                # TRAINING_ARGS_NAME = "training_args.bin" (from transformers)
-                torch.save(trainer.args, os.path.join(output_dir, "training_args.bin"))
-                if trainer.processing_class is not None:
-                    trainer.processing_class.save_pretrained(output_dir)
-                elif (trainer.data_collator is not None and 
-                      hasattr(trainer.data_collator, "tokenizer") and 
-                      trainer.data_collator.tokenizer is not None):
-                    trainer.data_collator.tokenizer.save_pretrained(output_dir)
-            else:
-                # Fallback to original method
-                original_save(output_dir, state_dict=state_dict)
+                
+                # Save PEFT adapter state dict directly (faster than save_pretrained)
+                # Add base_model.model prefix for PEFT format compatibility
+                prefixed_peft_dict = {}
+                for key, value in peft_state_dict.items():
+                    prefixed_peft_dict[f"base_model.model.{key}"] = value
+                
+                if training_args.save_safetensors:
+                    safetensors.torch.save_file(
+                        prefixed_peft_dict,
+                        os.path.join(output_dir, "adapter_model.safetensors"),
+                        metadata={"format": "pt"}
+                    )
+                else:
+                    torch.save(prefixed_peft_dict, os.path.join(output_dir, "adapter_model.bin"))
+                
+                # Save classifier separately as classifier.pt (matches inference loading)
+                classifier_path = os.path.join(output_dir, "classifier.pt")
+                torch.save(model.classifier.state_dict(), classifier_path)
+                
+                # Save PEFT config (minimal overhead)
+                if hasattr(model.base_model, 'peft_config') and active_adapter in model.base_model.peft_config:
+                    peft_config = model.base_model.peft_config[active_adapter]
+                    peft_config.save_pretrained(output_dir)
+                
+            except Exception as e:
+                logger.warning(f"Optimized save failed, falling back to save_pretrained: {e}")
+                # Fallback to model.save_pretrained if direct extraction fails
+                if hasattr(model, 'save_pretrained'):
+                    model.save_pretrained(
+                        output_dir,
+                        safe_serialization=training_args.save_safetensors
+                    )
+                else:
+                    original_save(output_dir, state_dict=state_dict)
+                    return
+            
+            # Save training args and tokenizer (same as original)
+            torch.save(trainer.args, os.path.join(output_dir, "training_args.bin"))
+            if trainer.processing_class is not None:
+                trainer.processing_class.save_pretrained(output_dir)
+            elif (trainer.data_collator is not None and 
+                  hasattr(trainer.data_collator, "tokenizer") and 
+                  trainer.data_collator.tokenizer is not None):
+                trainer.data_collator.tokenizer.save_pretrained(output_dir)
         
         trainer._save = custom_save
-        logger.info("✓ Overrode Trainer save method to use PEFT adapter-only checkpoints")
+        logger.info("✓ Overrode Trainer save method with optimized PEFT adapter-only checkpoints")
 
     # Precompute FLOPs once from first train batch (reliable)
     try:
