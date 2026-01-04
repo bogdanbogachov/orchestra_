@@ -71,8 +71,9 @@ def load_model_and_tokenizer():
     dtype_map = {"float32": torch.float32, "float16": torch.float16, "bfloat16": torch.bfloat16}
     torch_dtype = dtype_map.get(model_config['torch_dtype'], torch.float32)
     
-    # ALWAYS load the default model first to get its score layer weights
-    # This ensures we get the exact same initialization for both custom and default heads
+    # ALWAYS load the default model first
+    # For custom head: extract base_model from it
+    # For default head: use it directly
     default_model = AutoModelForSequenceClassification.from_pretrained(
         model_path,
         num_labels=num_labels,
@@ -112,25 +113,18 @@ def load_model_and_tokenizer():
             # Fallback to CPU
             target_device = torch.device('cpu')
         
-        # Move classifier to target device BEFORE copying weights
+        # Move classifier to target device
         classifier = classifier.to(target_device)
         
-        # Copy weights from the actual default model's score layer
-        # This ensures we use the exact same weights that the default head uses
-        with torch.no_grad():
-            # Get target dtype from classifier
-            target_dtype = classifier.classifier.weight.dtype
-            # Get source weight from the actual default model (same one that would be used for default head)
-            source_weight = default_model.score.weight.data.to(device=target_device, dtype=target_dtype)
-            # Copy the weight
-            classifier.classifier.weight.data.copy_(source_weight)
-        
-        logger.info("✓ Initialized custom classifier weights to match default head's score layer")
+        # Custom head classifier uses random initialization (appropriate for pooled features)
+        # Unlike default head which uses last-token features, custom head receives pooled features
+        # with different distribution, so copying default weights would be counterproductive
+        logger.info("✓ Custom classifier initialized randomly (appropriate for pooled features)")
         
         model = CustomClassificationModel(base_model, classifier)
         logger.info(f"✓ Loaded base model with custom classification head")
         
-        # Clean up the default model (we only needed it for the weights and base model)
+        # Clean up the default model (we only needed it for the base model)
         del default_model
     else:
         # Use the default model directly
