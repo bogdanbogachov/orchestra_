@@ -209,6 +209,65 @@ def run_finetune():
         
         trainer._save = custom_save
         logger.info("✓ Overrode Trainer save method with optimized PEFT adapter-only checkpoints")
+        
+        # Also override _load_best_model to handle adapter + classifier loading
+        original_load_best = trainer._load_best_model
+        
+        def custom_load_best_model():
+            """Custom load that handles PEFT adapters + classifier for custom head models."""
+            import safetensors.torch
+            
+            best_checkpoint_dir = trainer.state.best_model_checkpoint
+            if best_checkpoint_dir is None:
+                logger.warning("No best model checkpoint found, skipping load")
+                return
+            
+            logger.info(f"Loading best model from {best_checkpoint_dir} (score: {trainer.state.best_metric}).")
+            
+            # Load PEFT adapters
+            adapter_path = os.path.join(best_checkpoint_dir, "adapter_model.safetensors")
+            adapter_bin_path = os.path.join(best_checkpoint_dir, "adapter_model.bin")
+            
+            if os.path.exists(adapter_path):
+                # Load adapter state dict
+                adapter_state_dict = safetensors.torch.load_file(adapter_path)
+                # Remove base_model.model prefix for loading
+                peft_state_dict = {}
+                for key, value in adapter_state_dict.items():
+                    if key.startswith("base_model.model."):
+                        peft_state_dict[key.replace("base_model.model.", "")] = value
+                
+                # Load into PEFT model
+                from peft import set_peft_model_state_dict
+                set_peft_model_state_dict(model.base_model, peft_state_dict)
+                logger.info("✓ Loaded PEFT adapters from best checkpoint")
+            elif os.path.exists(adapter_bin_path):
+                adapter_state_dict = torch.load(adapter_bin_path, map_location="cpu")
+                peft_state_dict = {}
+                for key, value in adapter_state_dict.items():
+                    if key.startswith("base_model.model."):
+                        peft_state_dict[key.replace("base_model.model.", "")] = value
+                from peft import set_peft_model_state_dict
+                set_peft_model_state_dict(model.base_model, peft_state_dict)
+                logger.info("✓ Loaded PEFT adapters from best checkpoint")
+            else:
+                logger.warning(f"Adapter file not found in {best_checkpoint_dir}, trying original load method")
+                original_load_best()
+                return
+            
+            # Load classifier
+            classifier_path = os.path.join(best_checkpoint_dir, "classifier.pt")
+            if os.path.exists(classifier_path):
+                # Get device from classifier
+                device = next(model.classifier.parameters()).device
+                classifier_state = torch.load(classifier_path, map_location=device)
+                model.classifier.load_state_dict(classifier_state)
+                logger.info("✓ Loaded classifier from best checkpoint")
+            else:
+                logger.warning(f"Classifier file not found in {best_checkpoint_dir}")
+        
+        trainer._load_best_model = custom_load_best_model
+        logger.info("✓ Overrode Trainer load_best_model method for custom head models")
 
     # Precompute FLOPs once from first train batch (reliable)
     try:
