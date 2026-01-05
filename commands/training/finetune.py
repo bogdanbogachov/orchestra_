@@ -41,13 +41,29 @@ def extract_global_experiment_number(experiment_name: str) -> Optional[int]:
     
     Format: base_name_global_exp_num_per_config_exp_num
     Example: "35_l_default_8_1" -> 8
+    Example: "35_L_custom_last_8_1" -> 8
     """
     import re
     # Pattern: base_name_global_exp_num_per_config_exp_num
     # Extract the second-to-last number (global experiment number)
+    # Match: any characters, then _number_number at the end
     match = re.match(r'^(.+)_(\d+)_(\d+)$', experiment_name)
     if match:
         return int(match.group(2))  # global_exp_num is the second-to-last number
+    
+    # Try alternative pattern in case format is slightly different
+    # Look for pattern: ..._number_number at the end
+    parts = experiment_name.split('_')
+    if len(parts) >= 3:
+        try:
+            # Try to parse last two parts as numbers
+            last_num = int(parts[-1])
+            second_last_num = int(parts[-2])
+            # If both are numbers, return the second-to-last
+            return second_last_num
+        except (ValueError, IndexError):
+            pass
+    
     return None
 
 
@@ -59,15 +75,18 @@ def run_finetune():
     experiments_dir = paths_config['experiments']
     
     # Extract global experiment number and create nested directory structure
+    # ALWAYS use nested structure when global number can be extracted
     global_exp_num = extract_global_experiment_number(experiment_name)
     if global_exp_num is not None:
         # New structure: experiments/global_exp_num/experiment_name/head_type
         output_base = os.path.join(experiments_dir, str(global_exp_num), experiment_name)
         logger.info(f"Using nested directory structure: experiments/{global_exp_num}/{experiment_name}")
     else:
-        # Fallback to old structure if global number can't be extracted
+        # Fallback to old structure ONLY if global number truly cannot be extracted
+        # This should be rare - most experiment names follow the pattern
         output_base = os.path.join(experiments_dir, experiment_name)
         logger.warning(f"Could not extract global experiment number from '{experiment_name}', using flat structure")
+        logger.warning(f"Expected format: base_name_global_exp_num_per_config_exp_num (e.g., '35_l_default_8_1')")
     
     # Use random seed if specified, otherwise use None for non-deterministic training
     seed = training_config.get('seed', None)
@@ -82,10 +101,28 @@ def run_finetune():
     
     head_type = "custom_head" if use_custom_head else "default_head"
     output_dir = os.path.join(output_base, head_type)
+    
+    # Ensure we're using nested structure - never create in root if we have global_exp_num
+    if global_exp_num is not None:
+        # Verify the path includes the global experiment number
+        expected_global_exp_path = os.path.join(experiments_dir, str(global_exp_num))
+        if not output_dir.startswith(expected_global_exp_path):
+            raise ValueError(f"Output directory {output_dir} does not include global experiment number {global_exp_num}. "
+                           f"Expected path to start with {expected_global_exp_path}")
+    
     os.makedirs(output_dir, exist_ok=True)
     max_length = training_config['max_length']
     
     logger.info(f"Training {head_type} - output directory: {output_dir}")
+    
+    # Verify output_dir is correct (should be nested when global_exp_num exists)
+    if global_exp_num is not None:
+        actual_path = os.path.abspath(output_dir)
+        expected_components = [experiments_dir, str(global_exp_num), experiment_name, head_type]
+        expected_path = os.path.abspath(os.path.join(*expected_components))
+        if actual_path != expected_path:
+            logger.error(f"Path mismatch! Actual: {actual_path}, Expected: {expected_path}")
+            raise ValueError(f"Output directory path verification failed. Check directory structure.")
     
     all_texts, all_labels = load_data(paths_config['data']['train'])
     # Use random state only if seed is set, otherwise use None for random splits

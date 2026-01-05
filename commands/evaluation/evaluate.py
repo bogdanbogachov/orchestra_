@@ -47,6 +47,7 @@ def extract_global_experiment_number(experiment_name: str) -> Optional[int]:
     
     Format: base_name_global_exp_num_per_config_exp_num
     Example: "35_l_default_8_1" -> 8
+    Example: "35_L_custom_last_8_1" -> 8
     """
     import re
     # Pattern: base_name_global_exp_num_per_config_exp_num
@@ -54,6 +55,20 @@ def extract_global_experiment_number(experiment_name: str) -> Optional[int]:
     match = re.match(r'^(.+)_(\d+)_(\d+)$', experiment_name)
     if match:
         return int(match.group(2))  # global_exp_num is the second-to-last number
+    
+    # Try alternative pattern in case format is slightly different
+    # Look for pattern: ..._number_number at the end
+    parts = experiment_name.split('_')
+    if len(parts) >= 3:
+        try:
+            # Try to parse last two parts as numbers
+            last_num = int(parts[-1])
+            second_last_num = int(parts[-2])
+            # If both are numbers, return the second-to-last
+            return second_last_num
+        except (ValueError, IndexError):
+            pass
+    
     return None
 
 

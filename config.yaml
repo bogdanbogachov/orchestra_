@@ -49,7 +49,7 @@ training:
   early_stopping_patience: 3  # Number of evaluation steps without improvement before stopping
   early_stopping_threshold: 0.0001  # Minimum change to qualify as an improvement (1e-4 - filters noise but allows small improvements)
   # Accuracy milestone tracking
-  accuracy_threshold: 0.95  # Accuracy threshold for milestone tracking (e.g., 0.95 for 95%). When reached, training metrics are snapshotted and model is evaluated separately.
+  accuracy_threshold: 0.99  # Accuracy threshold for milestone tracking (e.g., 0.95 for 95%). When reached, training metrics are snapshotted and model is evaluated separately.
   # Evaluation and saving
   logging_steps: 10
   eval_steps: 25

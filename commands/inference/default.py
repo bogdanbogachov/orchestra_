@@ -17,8 +17,26 @@ def _resolve_default_adapter_path(adapter_path: Optional[str]) -> str:
         return adapter_path
     paths_config = CONFIG["paths"]
     experiment_name = CONFIG.get("experiment", "orchestra")
-
-    return os.path.join(paths_config["experiments"], experiment_name, "default_head")
+    experiments_dir = paths_config["experiments"]
+    
+    # Extract global experiment number and use nested directory structure
+    import re
+    match = re.match(r'^(.+)_(\d+)_(\d+)$', experiment_name)
+    if match:
+        global_exp_num = int(match.group(2))
+        return os.path.join(experiments_dir, str(global_exp_num), experiment_name, "default_head")
+    else:
+        # Fallback: try to parse last two parts as numbers
+        parts = experiment_name.split('_')
+        if len(parts) >= 3:
+            try:
+                last_num = int(parts[-1])
+                second_last_num = int(parts[-2])
+                return os.path.join(experiments_dir, str(second_last_num), experiment_name, "default_head")
+            except (ValueError, IndexError):
+                pass
+        # Final fallback to old structure
+        return os.path.join(experiments_dir, experiment_name, "default_head")
 
 
 def _load_default_model_and_tokenizer(adapter_path: Optional[str] = None):
@@ -94,7 +112,8 @@ def run_infer_default(
             data = json.load(f)
 
         if output_path is None:
-            output_path = os.path.join(os.path.dirname(resolved_adapter_path), "default_head", "test_predictions.json")
+            # resolved_adapter_path already includes "default_head", so use it directly
+            output_path = os.path.join(resolved_adapter_path, "test_predictions.json")
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
         results: List[Dict[str, Any]] = []
