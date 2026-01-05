@@ -48,4 +48,4 @@ if __name__ == '__main__':
         logger.info("=" * 100)
         logger.info("STEP: AGGREGATE RESULTS")
         logger.info("=" * 100)
-        run_aggregate_results()
+        run_aggregate_results(global_exp_num=args.global_exp_num)

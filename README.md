@@ -146,3 +146,86 @@ cat _err_out/EXP_NAME.err
 - The script automatically creates the `_err_out/` directory if it doesn't exist
 - All job output and error files are saved to `_err_out/`
 - The script handles job status checking and will proceed if a job completes quickly or fails
+
+## 4. Experiment Directory Structure
+
+Experiments are organized in a nested directory structure by global experiment number:
+
+```
+experiments/
+  └── 8/                          # Global experiment number
+      └── 35_l_default_8_1/       # Full experiment name (base_name_global_exp_num_per_config_exp_num)
+          ├── default_head/
+          │   ├── test_predictions_best.json
+          │   ├── test_predictions_95percent.json  # Milestone model predictions (if threshold reached)
+          │   ├── evaluation_results.json
+          │   ├── training_metrics.json
+          │   ├── milestone_95_percent_metrics.json  # Snapshot at 95% accuracy
+          │   └── checkpoint_info.json
+          └── custom_head/
+              └── ...
+```
+
+**Directory Structure:**
+- `experiments/global_exp_num/experiment_name/head_type/`
+- The global experiment number is extracted from the experiment name format: `base_name_global_exp_num_per_config_exp_num`
+- Example: `35_l_default_8_1` → global experiment number is `8`, per-config experiment number is `1`
+
+## 5. Aggregating Experiment Results
+
+The aggregation system processes evaluation results across multiple experiment runs and generates publication-quality tables and charts.
+
+### 5.1 Running Aggregation
+
+**Aggregate a specific global experiment number:**
+```bash
+python main.py --aggregate_results True --global_exp_num 8
+```
+
+**Aggregate all global experiment numbers (kept separate):**
+```bash
+python main.py --aggregate_results True
+```
+
+### 5.2 Aggregation Features
+
+The aggregation system:
+
+1. **Separates by Global Experiment Number**: Results are grouped by both base experiment name and global experiment number, keeping different global experiment runs separate.
+
+2. **Handles Both Best and Milestone Models**: 
+   - Aggregates metrics from the best model (based on `metric_for_best_model` in config)
+   - Also aggregates metrics from milestone models (e.g., when accuracy threshold is reached)
+   - Metrics are prefixed with `best_` and `milestone_` for clarity
+
+3. **Excludes Cold Start**: The first run of each experiment type is automatically excluded as it may be a cold start that takes significantly longer.
+
+4. **Output Structure**:
+   - When `--global_exp_num` is specified: Results saved to `experiment_aggregations/global_exp_8/`
+   - When not specified: Results saved to `experiment_aggregations/` with all global experiment numbers shown separately
+
+### 5.3 Aggregation Outputs
+
+The aggregation generates:
+
+1. **CSV Table** (`aggregated_metrics.csv`): Mean ± standard deviation for all metrics
+2. **LaTeX Table** (`aggregated_metrics.tex`): Publication-ready LaTeX format
+3. **Charts** (`charts/` directory): Publication-quality bar charts for each metric
+4. **Detailed Statistics** (`detailed_statistics.json`): Complete statistics including count, mean, and std for all metrics
+
+### 5.4 Experiment Labels
+
+In tables and charts, experiments are labeled with their global experiment number:
+- `35_l_default (G8)` - Base name with global experiment number 8
+- `35_l_custom_mean (G7)` - Base name with global experiment number 7
+
+This allows easy comparison of the same experiment type across different global experiment numbers.
+
+### 5.5 Configuration
+
+The aggregation reads experiment configurations from `experiment_configs.sh` to determine:
+- Which experiments to aggregate
+- The evaluation head type for each experiment
+- The order of experiments in tables and charts
+
+Make sure `experiment_configs.sh` matches your experiment naming convention.

@@ -1,7 +1,9 @@
 import torch
 import json
 import os
+from typing import Optional
 from transformers import TrainingArguments, Trainer, DataCollatorWithPadding, EarlyStoppingCallback
+from transformers.trainer_utils import SaveStrategy, PREFIX_CHECKPOINT_DIR
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score
 import numpy as np
@@ -10,6 +12,7 @@ from commands.training.dataset import ClassificationDataset
 from commands.training.model import load_model_and_tokenizer, setup_lora
 from commands.training.seed_utils import set_seed
 from commands.training.metrics_callback import TrainingMetricsCallback
+from commands.training.accuracy_milestone_callback import AccuracyMilestoneCallback
 from commands.utils.metrics import calculate_flops_for_transformer
 from logger_config import logger
 
@@ -32,12 +35,39 @@ def compute_metrics(eval_pred):
     return {"accuracy": accuracy}
 
 
+def extract_global_experiment_number(experiment_name: str) -> Optional[int]:
+    """
+    Extract global experiment number from experiment name.
+    
+    Format: base_name_global_exp_num_per_config_exp_num
+    Example: "35_l_default_8_1" -> 8
+    """
+    import re
+    # Pattern: base_name_global_exp_num_per_config_exp_num
+    # Extract the second-to-last number (global experiment number)
+    match = re.match(r'^(.+)_(\d+)_(\d+)$', experiment_name)
+    if match:
+        return int(match.group(2))  # global_exp_num is the second-to-last number
+    return None
+
+
 def run_finetune():
     training_config = CONFIG['training']
     data_config = CONFIG['data_processing']
     paths_config = CONFIG['paths']
     experiment_name = CONFIG.get('experiment', 'orchestra')
     experiments_dir = paths_config['experiments']
+    
+    # Extract global experiment number and create nested directory structure
+    global_exp_num = extract_global_experiment_number(experiment_name)
+    if global_exp_num is not None:
+        # New structure: experiments/global_exp_num/experiment_name/head_type
+        output_base = os.path.join(experiments_dir, str(global_exp_num), experiment_name)
+        logger.info(f"Using nested directory structure: experiments/{global_exp_num}/{experiment_name}")
+    else:
+        # Fallback to old structure if global number can't be extracted
+        output_base = os.path.join(experiments_dir, experiment_name)
+        logger.warning(f"Could not extract global experiment number from '{experiment_name}', using flat structure")
     
     # Use random seed if specified, otherwise use None for non-deterministic training
     seed = training_config.get('seed', None)
@@ -51,7 +81,7 @@ def run_finetune():
     model = setup_lora(model, use_custom_head)
     
     head_type = "custom_head" if use_custom_head else "default_head"
-    output_dir = os.path.join(experiments_dir, experiment_name, head_type)
+    output_dir = os.path.join(output_base, head_type)
     os.makedirs(output_dir, exist_ok=True)
     max_length = training_config['max_length']
     
@@ -135,6 +165,15 @@ def run_finetune():
     # Training metrics callback for FLOPs and memory tracking
     metrics_callback = TrainingMetricsCallback(output_dir=output_dir)
     logger.info("✓ Training metrics tracking enabled (FLOPs and memory)")
+    
+    # Accuracy milestone callback to track accuracy milestone
+    accuracy_threshold = training_config.get('accuracy_threshold', 0.95)
+    accuracy_milestone_callback = AccuracyMilestoneCallback(
+        output_dir=output_dir,
+        accuracy_threshold=accuracy_threshold,
+        metrics_callback=metrics_callback
+    )
+    logger.info(f"✓ Accuracy milestone tracking enabled ({accuracy_threshold*100:.1f}% threshold)")
 
     trainer = Trainer(
         model=model,
@@ -143,7 +182,7 @@ def run_finetune():
         eval_dataset=val_dataset,
         data_collator=data_collator,
         compute_metrics=compute_metrics,
-        callbacks=[early_stopping_callback, metrics_callback],
+        callbacks=[early_stopping_callback, metrics_callback, accuracy_milestone_callback],
     )
 
     # Override Trainer's _save method for custom head models with optimized direct save
@@ -280,6 +319,79 @@ def run_finetune():
         
         trainer._load_best_model = custom_load_best_model
         logger.info("✓ Overrode Trainer load_best_model method for custom head models")
+    
+    # Override _save_checkpoint to include eval_accuracy in checkpoint folder names
+    original_save_checkpoint = trainer._save_checkpoint
+    
+    def custom_save_checkpoint(model, trial=None):
+        """Save checkpoint with eval_accuracy in folder name."""
+        # Get latest eval_accuracy from state if available
+        eval_accuracy = None
+        if hasattr(trainer.state, 'log_history') and trainer.state.log_history:
+            # Find the most recent eval_accuracy from log history
+            for log_entry in reversed(trainer.state.log_history):
+                if 'eval_accuracy' in log_entry:
+                    eval_accuracy = log_entry['eval_accuracy']
+                    break
+        
+        # Build checkpoint folder name with accuracy
+        if eval_accuracy is not None:
+            accuracy_str = f"acc{eval_accuracy:.4f}".replace('.', 'p')
+            checkpoint_folder = f"{PREFIX_CHECKPOINT_DIR}-{trainer.state.global_step}-{accuracy_str}"
+        else:
+            checkpoint_folder = f"{PREFIX_CHECKPOINT_DIR}-{trainer.state.global_step}"
+        
+        run_dir = trainer._get_output_dir(trial=trial)
+        output_dir = os.path.join(run_dir, checkpoint_folder)
+        
+        try:
+            # Save model
+            trainer.save_model(output_dir, _internal_call=True)
+            
+            # Handle best checkpoint tracking
+            if trainer.args.save_strategy in [SaveStrategy.STEPS, SaveStrategy.EPOCH] and trainer.state.best_global_step:
+                # Get accuracy for best checkpoint too
+                best_eval_accuracy = None
+                for log_entry in trainer.state.log_history:
+                    if log_entry.get('step') == trainer.state.best_global_step and 'eval_accuracy' in log_entry:
+                        best_eval_accuracy = log_entry['eval_accuracy']
+                        break
+                
+                if best_eval_accuracy is not None:
+                    best_accuracy_str = f"acc{best_eval_accuracy:.4f}".replace('.', 'p')
+                    best_checkpoint_folder = f"{PREFIX_CHECKPOINT_DIR}-{trainer.state.best_global_step}-{best_accuracy_str}"
+                else:
+                    best_checkpoint_folder = f"{PREFIX_CHECKPOINT_DIR}-{trainer.state.best_global_step}"
+                
+                best_checkpoint_dir = os.path.join(run_dir, best_checkpoint_folder)
+                if os.path.exists(best_checkpoint_dir):
+                    trainer.state.best_model_checkpoint = best_checkpoint_dir
+            
+            # Save optimizer, scheduler, RNG if needed
+            if not trainer.args.save_only_model:
+                trainer._save_optimizer_and_scheduler(output_dir)
+                trainer._save_scaler(output_dir)
+                trainer._save_rng_state(output_dir)
+            
+            # Save trainer state
+            if trainer.args.should_save:
+                from transformers.trainer import ExportableState
+                for cb in [cb for cb in trainer.callback_handler.callbacks + [trainer.control] if isinstance(cb, ExportableState)]:
+                    cb_name = cb.__class__.__name__
+                    cb_state = cb.state()
+                    if isinstance(trainer.state.stateful_callbacks[cb_name], list):
+                        trainer.state.stateful_callbacks[cb_name].append(cb_state)
+                    else:
+                        trainer.state.stateful_callbacks[cb_name] = cb_state
+                
+                trainer.state.save_to_json(os.path.join(output_dir, "trainer_state.json"))
+            
+        except Exception as e:
+            logger.warning(f"Custom checkpoint save failed, falling back to original: {e}")
+            original_save_checkpoint(model, trial)
+    
+    trainer._save_checkpoint = custom_save_checkpoint
+    logger.info("✓ Overrode Trainer _save_checkpoint to include eval_accuracy in folder names")
 
     # Precompute FLOPs once from first train batch (reliable)
     try:
@@ -306,3 +418,82 @@ def run_finetune():
     
     tokenizer.save_pretrained(output_dir)
     logger.info(f"✓ Saved tokenizer to {output_dir}")
+    
+    # Run inference on both best model and milestone model
+    threshold_percent = int(accuracy_threshold * 100)
+    logger.info("=" * 100)
+    logger.info(f"Running inference on test set for both best model and {threshold_percent}% milestone model")
+    logger.info("=" * 100)
+    
+    # Get checkpoint info
+    checkpoint_info = accuracy_milestone_callback.get_checkpoint_info()
+    first_milestone_step = accuracy_milestone_callback.get_first_95_percent_checkpoint()
+    
+    # Find best model checkpoint
+    best_checkpoint_dir = trainer.state.best_model_checkpoint if hasattr(trainer.state, 'best_model_checkpoint') else None
+    
+    # Find milestone checkpoint
+    milestone_checkpoint_dir = None
+    if first_milestone_step is not None:
+        # Find checkpoint folder that matches the step (may have accuracy in name)
+        run_dir = trainer._get_output_dir()
+        import glob
+        # Search for checkpoint folders matching the step (with or without accuracy suffix)
+        pattern = os.path.join(run_dir, f"checkpoint-{first_milestone_step}*")
+        matches = glob.glob(pattern)
+        if matches:
+            # Prefer checkpoint with accuracy in name, otherwise use first match
+            milestone_checkpoint_dir = matches[0]
+            for match in matches:
+                if "acc" in os.path.basename(match):
+                    milestone_checkpoint_dir = match
+                    break
+            logger.info(f"Found {threshold_percent}% milestone checkpoint: {milestone_checkpoint_dir}")
+        else:
+            logger.warning(f"Could not find checkpoint folder for step {first_milestone_step} in {run_dir}")
+    
+    # Run inference on best model (default behavior)
+    logger.info("Running inference on best model...")
+    if use_custom_head:
+        from commands.inference.custom import run_infer_custom
+        # For custom head, checkpoint contains adapter_model.safetensors and classifier.pt
+        # Use the checkpoint directory directly
+        best_adapter_path = best_checkpoint_dir if best_checkpoint_dir else output_dir
+        best_output_path = os.path.join(output_dir, "test_predictions_best.json")
+        run_infer_custom(adapter_path=best_adapter_path, output_path=best_output_path)
+    else:
+        from commands.inference.default import run_infer_default
+        # For default head, checkpoint contains adapter files
+        best_adapter_path = best_checkpoint_dir if best_checkpoint_dir else output_dir
+        best_output_path = os.path.join(output_dir, "test_predictions_best.json")
+        run_infer_default(adapter_path=best_adapter_path, output_path=best_output_path)
+    logger.info(f"✓ Saved best model predictions to {best_output_path}")
+    
+    # Run inference on milestone model if it exists
+    if milestone_checkpoint_dir is not None and os.path.exists(milestone_checkpoint_dir):
+        logger.info(f"Running inference on {threshold_percent}% milestone model (checkpoint: {milestone_checkpoint_dir})...")
+        milestone_output_path = os.path.join(output_dir, f"test_predictions_{threshold_percent}percent.json")
+        if use_custom_head:
+            run_infer_custom(adapter_path=milestone_checkpoint_dir, output_path=milestone_output_path)
+        else:
+            run_infer_default(adapter_path=milestone_checkpoint_dir, output_path=milestone_output_path)
+        logger.info(f"✓ Saved {threshold_percent}% milestone model predictions to {milestone_output_path}")
+    else:
+        if first_milestone_step is not None:
+            logger.warning(f"{threshold_percent}% milestone reached at step {first_milestone_step}, but checkpoint not found")
+            # Try to find it by searching all checkpoint directories
+            run_dir = trainer._get_output_dir()
+            import glob
+            pattern = os.path.join(run_dir, f"checkpoint-{first_milestone_step}*")
+            matches = glob.glob(pattern)
+            if matches:
+                milestone_checkpoint_dir = matches[0]
+                logger.info(f"Found {threshold_percent}% milestone checkpoint at {milestone_checkpoint_dir}, running inference...")
+                milestone_output_path = os.path.join(output_dir, f"test_predictions_{threshold_percent}percent.json")
+                if use_custom_head:
+                    run_infer_custom(adapter_path=milestone_checkpoint_dir, output_path=milestone_output_path)
+                else:
+                    run_infer_default(adapter_path=milestone_checkpoint_dir, output_path=milestone_output_path)
+                logger.info(f"✓ Saved {threshold_percent}% milestone model predictions to {milestone_output_path}")
+        else:
+            logger.info(f"{threshold_percent}% accuracy threshold not reached, skipping milestone model inference")

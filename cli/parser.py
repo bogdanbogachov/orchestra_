@@ -11,4 +11,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--infer_custom", type=str_to_bool, default=False)
     parser.add_argument("--evaluate", type=str_to_bool, default=False)
     parser.add_argument("--aggregate_results", type=str_to_bool, default=False)
+    parser.add_argument("--global_exp_num", type=int, default=None, 
+                       help="Global experiment number to aggregate (e.g., 7, 8). If not specified, aggregates all.")
     return parser

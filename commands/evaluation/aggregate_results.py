@@ -15,6 +15,8 @@ import re
 from collections import defaultdict
 from typing import Any, Dict, List, Optional, Tuple
 
+import matplotlib
+matplotlib.use('Agg')  # Use non-interactive backend to prevent hanging
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -90,6 +92,19 @@ def extract_base_name(experiment_name: str) -> Optional[str]:
     return None
 
 
+def extract_global_experiment_number(experiment_name: str) -> Optional[int]:
+    """
+    Extract global experiment number from full experiment name.
+    
+    Example: "35_l_default_8_1" -> 8
+    Pattern: base_name_global_exp_num_per_config_exp_num
+    """
+    match = re.match(r'^(.+)_(\d+)_(\d+)$', experiment_name)
+    if match:
+        return int(match.group(2))  # global_exp_num is the second-to-last number
+    return None
+
+
 def extract_run_number(experiment_name: str) -> Optional[int]:
     """
     Extract per-config experiment number (run number) from full experiment name.
@@ -103,24 +118,58 @@ def extract_run_number(experiment_name: str) -> Optional[int]:
     return None
 
 
-def load_evaluation_results(experiment_dir: str, head: str) -> Optional[Dict[str, Any]]:
+def load_evaluation_results(experiment_dir: str, head: str, model_type: str = "best") -> Optional[Dict[str, Any]]:
     """
     Load evaluation results from an experiment directory.
     
     Args:
         experiment_dir: Path to experiment directory
         head: "default_head" or "custom_head"
+        model_type: "best" for best model, or "milestone" for milestone model
     
     Returns:
         Evaluation results dictionary or None if file doesn't exist
     """
-    results_path = os.path.join(experiment_dir, head, "evaluation_results.json")
+    if model_type == "best":
+        results_path = os.path.join(experiment_dir, head, "evaluation_results.json")
+    elif model_type == "milestone":
+        # Find milestone results - look for milestone_*_percent in the results
+        head_dir = os.path.join(experiment_dir, head)
+        import glob
+        milestone_pattern = os.path.join(head_dir, "evaluation_results.json")
+        # We'll check if the results file contains milestone data
+        results_path = milestone_pattern
+    else:
+        results_path = os.path.join(experiment_dir, head, "evaluation_results.json")
+    
     if not os.path.exists(results_path):
         return None
     
     try:
         with open(results_path, 'r', encoding='utf-8') as f:
-            return json.load(f)
+            results = json.load(f)
+            
+            # If loading milestone, extract milestone data if available
+            if model_type == "milestone" and "milestone_95_percent" in results:
+                # Return milestone results as primary
+                milestone_data = results["milestone_95_percent"].copy()
+                # Keep common fields
+                milestone_data["experiment"] = results.get("experiment")
+                milestone_data["head"] = results.get("head")
+                milestone_data["test_samples"] = results.get("test_samples")
+                return milestone_data
+            elif model_type == "milestone":
+                # Try to find any milestone data (could be different threshold)
+                for key in results.keys():
+                    if key.startswith("milestone_") and key.endswith("_percent"):
+                        milestone_data = results[key].copy()
+                        milestone_data["experiment"] = results.get("experiment")
+                        milestone_data["head"] = results.get("head")
+                        milestone_data["test_samples"] = results.get("test_samples")
+                        return milestone_data
+                return None
+            
+            return results
     except Exception as e:
         logger.warning(f"Failed to load {results_path}: {e}")
         return None
@@ -166,17 +215,23 @@ def extract_flat_metrics(results: Dict[str, Any]) -> Dict[str, float]:
     return metrics
 
 
-def aggregate_metrics(experiments_dir: str, base_names: List[Tuple[str, str]]) -> Dict[str, Dict[str, List[float]]]:
+def aggregate_metrics(experiments_dir: str, base_names: List[Tuple[str, str]], 
+                     include_milestone: bool = True,
+                     global_exp_num: Optional[int] = None) -> Dict[Tuple[str, int], Dict[str, List[float]]]:
     """
-    Aggregate metrics across all runs of each experiment type.
+    Aggregate metrics across all runs of each experiment type, separated by global experiment number.
     Excludes the first run (cold start) from each experiment type.
+    Can aggregate both best models and milestone models.
     
     Args:
         experiments_dir: Path to experiments directory
         base_names: List of (base_name, eval_head) tuples
+        include_milestone: If True, also aggregate milestone model results
+        global_exp_num: If specified, only aggregate experiments from this global experiment number.
+                       If None, aggregate all global experiment numbers separately.
     
     Returns:
-        Dictionary mapping base_name -> metric_name -> list of values
+        Dictionary mapping (base_name, global_exp_num) -> metric_name -> list of values
     """
     aggregated = defaultdict(lambda: defaultdict(list))
     
@@ -184,68 +239,154 @@ def aggregate_metrics(experiments_dir: str, base_names: List[Tuple[str, str]]) -
         raise FileNotFoundError(f"Experiments directory not found: {experiments_dir}")
     
     # First pass: collect all runs with their run numbers, grouped by base_name
-    runs_by_base = defaultdict(list)  # base_name -> [(run_number, item, eval_head, exp_path), ...]
+    # Handle nested structure: experiments/global_exp_num/experiment_name
+    runs_by_base = defaultdict(list)  # base_name -> [(run_number, item, eval_head, exp_path, global_exp_num), ...]
     
+    # Check if we have nested structure (experiments/global_exp_num/experiment_name)
+    has_nested_structure = False
     for item in os.listdir(experiments_dir):
-        exp_path = os.path.join(experiments_dir, item)
-        if not os.path.isdir(exp_path):
-            continue
-        
-        base_name = extract_base_name(item)
-        if base_name is None:
-            continue
-        
-        run_number = extract_run_number(item)
-        if run_number is None:
-            continue
-        
-        # Find matching base name and eval head
-        matching_config = None
-        for bname, eval_head in base_names:
-            if bname == base_name:
-                matching_config = (bname, eval_head)
-                break
-        
-        if matching_config is None:
-            continue
-        
-        bname, eval_head = matching_config
-        runs_by_base[bname].append((run_number, item, eval_head, exp_path))
+        item_path = os.path.join(experiments_dir, item)
+        if os.path.isdir(item_path) and item.isdigit():
+            has_nested_structure = True
+            break
+    
+    if has_nested_structure:
+        # Nested structure: experiments/global_exp_num/experiment_name
+        logger.info("Detected nested directory structure: experiments/global_exp_num/experiment_name")
+        for global_exp_num_dir in os.listdir(experiments_dir):
+            global_exp_num_path = os.path.join(experiments_dir, global_exp_num_dir)
+            if not os.path.isdir(global_exp_num_path) or not global_exp_num_dir.isdigit():
+                continue
+            
+            # Filter by global_exp_num if specified
+            current_global_exp_num = int(global_exp_num_dir)
+            if global_exp_num is not None and current_global_exp_num != global_exp_num:
+                continue
+            
+            for item in os.listdir(global_exp_num_path):
+                exp_path = os.path.join(global_exp_num_path, item)
+                if not os.path.isdir(exp_path):
+                    continue
+                
+                base_name = extract_base_name(item)
+                if base_name is None:
+                    continue
+                
+                run_number = extract_run_number(item)
+                if run_number is None:
+                    continue
+                
+                # Find matching base name and eval head
+                matching_config = None
+                for bname, eval_head in base_names:
+                    if bname == base_name:
+                        matching_config = (bname, eval_head)
+                        break
+                
+                if matching_config is None:
+                    continue
+                
+                bname, eval_head = matching_config
+                current_global_exp_num = int(global_exp_num_dir)
+                # Group by both base_name and global_exp_num
+                key = (bname, current_global_exp_num)
+                runs_by_base[key].append((run_number, item, eval_head, exp_path, current_global_exp_num))
+    else:
+        # Flat structure: experiments/experiment_name (backward compatibility)
+        logger.info("Using flat directory structure: experiments/experiment_name")
+        for item in os.listdir(experiments_dir):
+            exp_path = os.path.join(experiments_dir, item)
+            if not os.path.isdir(exp_path):
+                continue
+            
+            base_name = extract_base_name(item)
+            if base_name is None:
+                continue
+            
+            run_number = extract_run_number(item)
+            if run_number is None:
+                continue
+            
+            # Find matching base name and eval head
+            matching_config = None
+            for bname, eval_head in base_names:
+                if bname == base_name:
+                    matching_config = (bname, eval_head)
+                    break
+            
+            if matching_config is None:
+                continue
+            
+            bname, eval_head = matching_config
+            # For flat structure, use None as global_exp_num
+            key = (bname, None)
+            runs_by_base[key].append((run_number, item, eval_head, exp_path, None))
     
     # Second pass: sort by run number, exclude first run, then aggregate
-    for bname, runs in runs_by_base.items():
+    for key, runs in runs_by_base.items():
+        bname, global_exp_num_key = key
         # Sort by run number
         runs.sort(key=lambda x: x[0])
         
         # Exclude the first run (cold start)
         if len(runs) > 1:
             runs_to_process = runs[1:]  # Skip first run
-            logger.info(f"Excluding first run (cold start) for {bname}. Processing {len(runs_to_process)} runs out of {len(runs)} total.")
+            global_exp_str = f" (global exp {global_exp_num_key})" if global_exp_num_key is not None else ""
+            logger.info(f"Excluding first run (cold start) for {bname}{global_exp_str}. Processing {len(runs_to_process)} runs out of {len(runs)} total.")
         else:
             runs_to_process = runs
-            logger.warning(f"Only {len(runs)} run found for {bname}, cannot exclude cold start.")
+            global_exp_str = f" (global exp {global_exp_num_key})" if global_exp_num_key is not None else ""
+            logger.warning(f"Only {len(runs)} run found for {bname}{global_exp_str}, cannot exclude cold start.")
         
-        # Process remaining runs
-        for run_number, item, eval_head, exp_path in runs_to_process:
-            # Load evaluation results
-            results = load_evaluation_results(exp_path, eval_head)
+        # Process remaining runs - aggregate best models
+        for run_data in runs_to_process:
+            if len(run_data) == 5:
+                run_number, item, eval_head, exp_path, global_exp_num = run_data
+            else:
+                run_number, item, eval_head, exp_path = run_data[:4]
+            
+            # Load evaluation results for best model
+            results = load_evaluation_results(exp_path, eval_head, model_type="best")
             if results is None:
-                logger.debug(f"No evaluation results found for {item}/{eval_head}")
-                continue
+                logger.debug(f"No evaluation results found for {item}/{eval_head} (best model)")
+            else:
+                # Extract metrics
+                metrics = extract_flat_metrics(results)
+                
+                # Add to aggregation - use key (bname, global_exp_num) instead of just bname
+                # Use "best_" prefix when milestone tracking is enabled for clarity
+                # Otherwise use unprefixed names for backward compatibility
+                for metric_name, value in metrics.items():
+                    if include_milestone:
+                        aggregated[key][f"best_{metric_name}"].append(value)
+                    else:
+                        aggregated[key][metric_name].append(value)
+                
+                logger.debug(f"Loaded best model metrics from {item}/{eval_head} (run {run_number})")
             
-            # Extract metrics
-            metrics = extract_flat_metrics(results)
-            
-            # Add to aggregation
-            for metric_name, value in metrics.items():
-                aggregated[bname][metric_name].append(value)
-            
-            logger.debug(f"Loaded metrics from {item}/{eval_head} (run {run_number})")
+            # Also load milestone model results if available
+            if include_milestone:
+                milestone_results = load_evaluation_results(exp_path, eval_head, model_type="milestone")
+                if milestone_results is not None:
+                    milestone_metrics = extract_flat_metrics(milestone_results)
+                    
+                    # Add to aggregation with "milestone_" prefix
+                    for metric_name, value in milestone_metrics.items():
+                        aggregated[key][f"milestone_{metric_name}"].append(value)
+                    
+                    logger.debug(f"Loaded milestone model metrics from {item}/{eval_head} (run {run_number})")
     
     # Log summary
-    for bname in aggregated:
-        total_runs = len(aggregated[bname].get('accuracy', []))
-        logger.info(f"Aggregated {total_runs} runs for {bname} (excluding cold start)")
+    for key in aggregated:
+        bname, global_exp_num_key = key
+        # Count best model runs (check both prefixed and unprefixed)
+        best_runs = len(aggregated[key].get('accuracy', aggregated[key].get('best_accuracy', [])))
+        milestone_runs = len(aggregated[key].get('milestone_accuracy', []))
+        global_exp_str = f" (global exp {global_exp_num_key})" if global_exp_num_key is not None else ""
+        if milestone_runs > 0:
+            logger.info(f"Aggregated {best_runs} best model runs and {milestone_runs} milestone model runs for {bname}{global_exp_str} (excluding cold start)")
+        else:
+            logger.info(f"Aggregated {best_runs} runs for {bname}{global_exp_str} (excluding cold start)")
     
     return aggregated
 
@@ -263,12 +404,14 @@ def compute_statistics(values: List[float]) -> Dict[str, float]:
     }
 
 
-def create_aggregation_table(aggregated: Dict[str, Dict[str, List[float]]], 
-                            base_names: List[Tuple[str, str]]) -> pd.DataFrame:
+def create_aggregation_table(aggregated: Dict[Tuple[str, Optional[int]], Dict[str, List[float]]], 
+                            base_names: List[Tuple[str, str]],
+                            global_exp_num: Optional[int] = None) -> pd.DataFrame:
     """
     Create a pandas DataFrame with aggregated metrics.
     
     Each row is an experiment type, each column is a metric (mean ± std).
+    Handles both best and milestone model metrics.
     """
     # Collect all metric names
     all_metrics = set()
@@ -276,46 +419,68 @@ def create_aggregation_table(aggregated: Dict[str, Dict[str, List[float]]],
         all_metrics.update(aggregated[bname].keys())
     
     # Filter to key metrics for the main table
-    key_metrics = [
+    # Include both best and milestone versions
+    base_key_metrics = [
         'accuracy', 'precision', 'recall', 'f1',
         'avg_latency_ms', 'std_latency_ms',
         'inference_flops_per_sample', 'inference_peak_memory_mb',
     ]
     
-    # Add training metrics if available
-    training_metrics = [m for m in all_metrics if m.startswith('training_')]
-    key_metrics.extend([m for m in training_metrics if 'flops' in m or 'memory' in m])
+    # Build key metrics list - include both best_ and milestone_ prefixed versions
+    key_metrics = []
+    for metric in base_key_metrics:
+        if f"best_{metric}" in all_metrics:
+            key_metrics.append(f"best_{metric}")
+        if f"milestone_{metric}" in all_metrics:
+            key_metrics.append(f"milestone_{metric}")
+        # Also include unprefixed if exists (backward compatibility)
+        if metric in all_metrics and f"best_{metric}" not in all_metrics:
+            key_metrics.append(metric)
+    
+    # Add training metrics if available (both best and milestone)
+    training_metrics = [m for m in all_metrics if 'training_' in m]
+    training_key_metrics = [m for m in training_metrics if 'flops' in m or 'memory' in m]
+    key_metrics.extend(training_key_metrics)
     
     # Filter to metrics that exist
     key_metrics = [m for m in key_metrics if m in all_metrics]
     
-    # Build table data
+    # Build table data - group by base_name and global_exp_num
     table_data = []
     for bname, _ in base_names:
-        if bname not in aggregated:
-            continue
+        # Find all entries for this base_name
+        matching_keys = [k for k in aggregated.keys() if k[0] == bname]
+        # Sort by global_exp_num for consistent ordering
+        matching_keys.sort(key=lambda x: (x[1] if x[1] is not None else float('inf'), x[0]))
         
-        row = {'Experiment': bname}
-        for metric in key_metrics:
-            if metric in aggregated[bname]:
-                stats = compute_statistics(aggregated[bname][metric])
-                # Format as mean ± std
-                if stats['count'] > 0:
-                    row[metric] = f"{stats['mean']:.4f} ± {stats['std']:.4f}"
+        for key in matching_keys:
+            bname_key, global_exp_num_key = key
+            exp_label = f"{bname_key}"
+            if global_exp_num_key is not None:
+                exp_label += f" (G{global_exp_num_key})"
+            
+            row = {'Experiment': exp_label}
+            for metric in key_metrics:
+                if metric in aggregated[key]:
+                    stats = compute_statistics(aggregated[key][metric])
+                    # Format as mean ± std
+                    if stats['count'] > 0:
+                        row[metric] = f"{stats['mean']:.4f} ± {stats['std']:.4f}"
+                    else:
+                        row[metric] = "N/A"
                 else:
                     row[metric] = "N/A"
-            else:
-                row[metric] = "N/A"
-        
-        table_data.append(row)
+            
+            table_data.append(row)
     
     df = pd.DataFrame(table_data)
     return df
 
 
-def create_charts(aggregated: Dict[str, Dict[str, List[float]]], 
+def create_charts(aggregated: Dict[Tuple[str, Optional[int]], Dict[str, List[float]]], 
                  base_names: List[Tuple[str, str]], 
-                 output_dir: str):
+                 output_dir: str,
+                 global_exp_num: Optional[int] = None):
     """
     Create publication-quality charts for each metric.
     
@@ -351,14 +516,24 @@ def create_charts(aggregated: Dict[str, Dict[str, List[float]]],
         stds = []
         
         for bname, _ in base_names:
-            if bname not in aggregated or metric not in aggregated[bname]:
-                continue
+            # Find all entries for this base_name
+            matching_keys = [k for k in aggregated.keys() if k[0] == bname]
+            # Sort by global_exp_num for consistent ordering
+            matching_keys.sort(key=lambda x: (x[1] if x[1] is not None else float('inf'), x[0]))
             
-            stats = compute_statistics(aggregated[bname][metric])
-            if stats['count'] > 0:
-                experiment_names.append(bname)
-                means.append(stats['mean'])
-                stds.append(stats['std'])
+            for key in matching_keys:
+                if metric not in aggregated[key]:
+                    continue
+                
+                stats = compute_statistics(aggregated[key][metric])
+                if stats['count'] > 0:
+                    bname_key, global_exp_num_key = key
+                    exp_label = f"{bname_key}"
+                    if global_exp_num_key is not None:
+                        exp_label += f" (G{global_exp_num_key})"
+                    experiment_names.append(exp_label)
+                    means.append(stats['mean'])
+                    stds.append(stats['std'])
         
         if not experiment_names:
             plt.close(fig)
@@ -404,6 +579,19 @@ def create_charts(aggregated: Dict[str, Dict[str, List[float]]],
 
 def _format_metric_name(metric: str) -> str:
     """Format metric name for display in charts and tables."""
+    # Handle best_ and milestone_ prefixes
+    is_best = metric.startswith('best_')
+    is_milestone = metric.startswith('milestone_')
+    
+    if is_best:
+        metric = metric[5:]  # Remove 'best_' prefix
+        prefix = "Best "
+    elif is_milestone:
+        metric = metric[11:]  # Remove 'milestone_' prefix
+        prefix = "Milestone "
+    else:
+        prefix = ""
+    
     # Replace underscores with spaces and capitalize
     formatted = metric.replace('_', ' ').title()
     
@@ -420,7 +608,7 @@ def _format_metric_name(metric: str) -> str:
     for old, new in replacements.items():
         formatted = formatted.replace(old, new)
     
-    return formatted
+    return prefix + formatted
 
 
 def save_latex_table(df: pd.DataFrame, output_path: str):
@@ -442,16 +630,21 @@ def save_latex_table(df: pd.DataFrame, output_path: str):
 
 
 def run_aggregate_results(experiment_configs_path: str = "experiment_configs.sh",
-                         output_dir: str = "experiment_aggregations"):
+                         output_dir: str = "experiment_aggregations",
+                         global_exp_num: Optional[int] = None):
     """
     Main function to aggregate evaluation results across experiments.
     
     Args:
         experiment_configs_path: Path to experiment_configs.sh
         output_dir: Directory to save aggregated results, tables, and charts
+        global_exp_num: If specified, only aggregate experiments from this global experiment number.
+                       If None, aggregate all global experiment numbers separately.
     """
     logger.info("=" * 100)
     logger.info("AGGREGATING EXPERIMENT RESULTS")
+    if global_exp_num is not None:
+        logger.info(f"Filtering to global experiment number: {global_exp_num}")
     logger.info("=" * 100)
     
     # Get experiments directory from config
@@ -465,19 +658,21 @@ def run_aggregate_results(experiment_configs_path: str = "experiment_configs.sh"
     if not base_names:
         raise ValueError("No experiment types found in config file")
     
-    # Aggregate metrics
+    # Aggregate metrics (include both best and milestone models)
     logger.info(f"Scanning experiments directory: {experiments_dir}")
-    aggregated = aggregate_metrics(experiments_dir, base_names)
+    aggregated = aggregate_metrics(experiments_dir, base_names, include_milestone=True, global_exp_num=global_exp_num)
     
     if not aggregated:
         raise ValueError("No evaluation results found. Run experiments first.")
     
-    # Create output directory
+    # Create output directory - include global_exp_num in path if specified
+    if global_exp_num is not None:
+        output_dir = os.path.join(output_dir, f"global_exp_{global_exp_num}")
     os.makedirs(output_dir, exist_ok=True)
     
     # Create aggregation table
     logger.info("Creating aggregation table...")
-    df = create_aggregation_table(aggregated, base_names)
+    df = create_aggregation_table(aggregated, base_names, global_exp_num=global_exp_num)
     
     # Save as CSV
     csv_path = os.path.join(output_dir, "aggregated_metrics.csv")
@@ -497,14 +692,18 @@ def run_aggregate_results(experiment_configs_path: str = "experiment_configs.sh"
     # Create charts
     logger.info("\nCreating charts...")
     charts_dir = os.path.join(output_dir, "charts")
-    create_charts(aggregated, base_names, charts_dir)
+    create_charts(aggregated, base_names, charts_dir, global_exp_num=global_exp_num)
     
     # Save detailed JSON with all statistics
     detailed_stats = {}
-    for bname in aggregated:
-        detailed_stats[bname] = {}
-        for metric in aggregated[bname]:
-            detailed_stats[bname][metric] = compute_statistics(aggregated[bname][metric])
+    for key in aggregated:
+        bname, global_exp_num_key = key
+        key_str = f"{bname}"
+        if global_exp_num_key is not None:
+            key_str += f"_G{global_exp_num_key}"
+        detailed_stats[key_str] = {}
+        for metric in aggregated[key]:
+            detailed_stats[key_str][metric] = compute_statistics(aggregated[key][metric])
     
     json_path = os.path.join(output_dir, "detailed_statistics.json")
     with open(json_path, 'w', encoding='utf-8') as f:
