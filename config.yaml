@@ -35,7 +35,7 @@ lora:
 training:
   seed: null  # Set to null for non-deterministic training, or an integer for reproducibility
   max_length: 512
-  num_train_epochs: 30  # Max epochs (early stopping will stop earlier if no improvement)
+  num_train_epochs: 45  # Max epochs (early stopping will stop earlier if no improvement)
   per_device_train_batch_size: 4  # Will be combined with gradient_accumulation_steps to achieve effective_batch_size
   per_device_eval_batch_size: 4
   effective_batch_size: 48  # Effective batch size = per_device_train_batch_size * gradient_accumulation_steps

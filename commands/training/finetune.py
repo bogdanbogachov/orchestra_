@@ -3,6 +3,8 @@ import json
 import os
 from transformers import TrainingArguments, Trainer, DataCollatorWithPadding, EarlyStoppingCallback
 from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score
+import numpy as np
 from config import CONFIG
 from commands.training.dataset import ClassificationDataset
 from commands.training.model import load_model_and_tokenizer, setup_lora
@@ -10,6 +12,7 @@ from commands.training.seed_utils import set_seed
 from commands.training.metrics_callback import TrainingMetricsCallback
 from commands.utils.metrics import calculate_flops_for_transformer
 from logger_config import logger
+
 
 def load_data(data_path: str):
     with open(data_path, 'r') as f:
@@ -19,6 +22,14 @@ def load_data(data_path: str):
     labels = [item["label"] for item in data]
     
     return texts, labels
+
+
+def compute_metrics(eval_pred):
+    """Compute metrics for evaluation."""
+    predictions, labels = eval_pred
+    predictions = np.argmax(predictions, axis=1)
+    accuracy = accuracy_score(labels, predictions)
+    return {"accuracy": accuracy}
 
 
 def run_finetune():
@@ -131,6 +142,7 @@ def run_finetune():
         train_dataset=train_dataset,
         eval_dataset=val_dataset,
         data_collator=data_collator,
+        compute_metrics=compute_metrics,
         callbacks=[early_stopping_callback, metrics_callback],
     )
 
