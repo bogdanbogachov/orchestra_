@@ -43,7 +43,7 @@ def run_milestone_inference(
         logger.info(f"{threshold_percent}% accuracy threshold not reached, skipping milestone model inference")
         return
 
-    run_dir = trainer._get_output_dir()
+    run_dir = trainer.args.output_dir
     milestone_dir = find_checkpoint_for_step(run_dir, first_milestone_step)
 
     if milestone_dir is None or not os.path.exists(milestone_dir):
