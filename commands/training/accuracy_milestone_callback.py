@@ -31,12 +31,12 @@ class AccuracyMilestoneCallback(TrainerCallback):
         threshold_key = f"first_{threshold_percent}_percent"
         self.checkpoint_info = {threshold_key: None, "all_checkpoints": []}
         
-    def on_evaluate(self, args, state, control, model=None, logs=None, **kwargs):
+    def on_evaluate(self, args, state, control, model=None, metrics=None, **kwargs):
         """Called after each evaluation step."""
-        if logs is None:
+        if metrics is None:
             return
             
-        eval_accuracy = logs.get("eval_accuracy")
+        eval_accuracy = metrics.get("eval_accuracy")
         if eval_accuracy is None:
             return
             
@@ -47,7 +47,7 @@ class AccuracyMilestoneCallback(TrainerCallback):
             "step": current_step,
             "epoch": state.epoch if hasattr(state, 'epoch') else None,
             "eval_accuracy": float(eval_accuracy),
-            "eval_loss": float(logs.get("eval_loss", 0.0)),
+            "eval_loss": float(metrics.get("eval_loss", 0.0)),
         }
         self.checkpoint_info["all_checkpoints"].append(checkpoint_info)
         
@@ -71,7 +71,7 @@ class AccuracyMilestoneCallback(TrainerCallback):
                 "step": current_step,
                 "epoch": state.epoch if hasattr(state, 'epoch') else None,
                 "eval_accuracy": float(eval_accuracy),
-                "eval_loss": float(logs.get("eval_loss", 0.0)),
+                "eval_loss": float(metrics.get("eval_loss", 0.0)),
             }
             
             # Save checkpoint info
@@ -171,4 +171,3 @@ class AccuracyMilestoneCallback(TrainerCallback):
     def get_checkpoint_info(self):
         """Get all checkpoint information."""
         return self.checkpoint_info
-
