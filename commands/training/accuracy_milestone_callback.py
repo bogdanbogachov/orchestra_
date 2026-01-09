@@ -164,7 +164,7 @@ class AccuracyMilestoneCallback(TrainerCallback):
         else:
             logger.info(f"⚠ {threshold_percent}% accuracy threshold not reached during training")
     
-    def get_first_95_percent_checkpoint(self):
+    def get_first_milestone_checkpoint(self):
         """Get the checkpoint step that first reached the accuracy threshold."""
         return self.first_milestone_checkpoint
     

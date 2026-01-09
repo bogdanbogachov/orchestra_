@@ -11,6 +11,7 @@ from peft import LoraConfig, get_peft_model, TaskType
 from config import CONFIG
 from logger_config import logger
 
+
 class CustomClassificationModel(torch.nn.Module):
     def __init__(self, base_model, classifier):
         super().__init__()

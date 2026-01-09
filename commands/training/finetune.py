@@ -14,6 +14,8 @@ from commands.training.seed_utils import set_seed
 from commands.training.metrics_callback import TrainingMetricsCallback
 from commands.training.accuracy_milestone_callback import AccuracyMilestoneCallback
 from commands.utils.metrics import calculate_flops_for_transformer
+from commands.inference.custom import run_infer_custom
+from commands.inference.default import run_infer_default
 from logger_config import logger
 
 
@@ -456,18 +458,23 @@ def run_finetune():
     tokenizer.save_pretrained(output_dir)
     logger.info(f"✓ Saved tokenizer to {output_dir}")
     
-    # Run inference on both best model and milestone model
+    # Run inference on milestone model (final saved model inference will be handled by CLI)
     threshold_percent = int(accuracy_threshold * 100)
     logger.info("=" * 100)
-    logger.info(f"Running inference on test set for both best model and {threshold_percent}% milestone model")
+    logger.info(f"Running inference on test set for {threshold_percent}% milestone model")
     logger.info("=" * 100)
     
     # Get checkpoint info
     checkpoint_info = accuracy_milestone_callback.get_checkpoint_info()
-    first_milestone_step = accuracy_milestone_callback.get_first_95_percent_checkpoint()
+    first_milestone_step = accuracy_milestone_callback.get_first_milestone_checkpoint()
     
-    # Find best model checkpoint
-    best_checkpoint_dir = trainer.state.best_model_checkpoint if hasattr(trainer.state, 'best_model_checkpoint') else None
+    # Also try to get milestone step from checkpoint_info directly (handles dynamic thresholds)
+    if first_milestone_step is None:
+        threshold_key = f"first_{threshold_percent}_percent"
+        milestone_info = checkpoint_info.get(threshold_key)
+        if milestone_info is not None:
+            first_milestone_step = milestone_info.get("step")
+            logger.info(f"Found {threshold_percent}% milestone at step {first_milestone_step} from checkpoint_info")
     
     # Find milestone checkpoint
     milestone_checkpoint_dir = None
@@ -488,23 +495,6 @@ def run_finetune():
             logger.info(f"Found {threshold_percent}% milestone checkpoint: {milestone_checkpoint_dir}")
         else:
             logger.warning(f"Could not find checkpoint folder for step {first_milestone_step} in {run_dir}")
-    
-    # Run inference on best model (default behavior)
-    logger.info("Running inference on best model...")
-    if use_custom_head:
-        from commands.inference.custom import run_infer_custom
-        # For custom head, checkpoint contains adapter_model.safetensors and classifier.pt
-        # Use the checkpoint directory directly
-        best_adapter_path = best_checkpoint_dir if best_checkpoint_dir else output_dir
-        best_output_path = os.path.join(output_dir, "test_predictions_best.json")
-        run_infer_custom(adapter_path=best_adapter_path, output_path=best_output_path)
-    else:
-        from commands.inference.default import run_infer_default
-        # For default head, checkpoint contains adapter files
-        best_adapter_path = best_checkpoint_dir if best_checkpoint_dir else output_dir
-        best_output_path = os.path.join(output_dir, "test_predictions_best.json")
-        run_infer_default(adapter_path=best_adapter_path, output_path=best_output_path)
-    logger.info(f"✓ Saved best model predictions to {best_output_path}")
     
     # Run inference on milestone model if it exists
     if milestone_checkpoint_dir is not None and os.path.exists(milestone_checkpoint_dir):
