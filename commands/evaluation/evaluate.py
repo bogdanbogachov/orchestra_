@@ -151,11 +151,13 @@ def run_evaluation(head: Optional[str] = None):
     # Evaluate milestone model if available
     head_metrics_milestone = None
     payload_milestone = None
+    milestone_threshold_percent = None
     if milestone_pred_path and os.path.exists(milestone_pred_path):
         # Extract threshold from filename (e.g., "test_predictions_95percent.json" -> 95)
         import re
         match = re.search(r'(\d+)percent', os.path.basename(milestone_pred_path))
-        threshold_percent = match.group(1) if match else "?"
+        milestone_threshold_percent = match.group(1) if match else "95"  # Default to 95 if not found
+        threshold_percent = milestone_threshold_percent
         logger.info(f"Evaluating {threshold_percent}% milestone model predictions from {milestone_pred_path}")
         payload_milestone = _load_predictions(milestone_pred_path)
         preds_milestone = np.asarray([int(x["pred"]) for x in payload_milestone["predictions"]], dtype=np.int64)
@@ -205,11 +207,12 @@ def run_evaluation(head: Optional[str] = None):
         },
     }
     
-    # Add 95% milestone model results if available
-    if head_metrics_milestone is not None and payload_milestone is not None:
+    # Add milestone model results if available
+    if head_metrics_milestone is not None and payload_milestone is not None and milestone_threshold_percent is not None:
         metrics_milestone = payload_milestone.get("metrics", {})
-        head_results["milestone_95_percent"] = {
-            "model_type": "95_percent_milestone",
+        milestone_key = f"milestone_{milestone_threshold_percent}_percent"
+        head_results[milestone_key] = {
+            "model_type": f"{milestone_threshold_percent}_percent_milestone",
             **head_metrics_milestone,
             "inference_metrics": {
                 "flops_per_sample": int(metrics_milestone.get("flops_per_sample", 0)),
@@ -223,9 +226,9 @@ def run_evaluation(head: Optional[str] = None):
         inference_energy_milestone = metrics_milestone.get("energy_consumption", {})
         inference_carbon_milestone = metrics_milestone.get("carbon_footprint", {})
         if inference_energy_milestone:
-            head_results["milestone_95_percent"]["inference_metrics"]["energy_consumption"] = inference_energy_milestone
+            head_results[milestone_key]["inference_metrics"]["energy_consumption"] = inference_energy_milestone
         if inference_carbon_milestone:
-            head_results["milestone_95_percent"]["inference_metrics"]["carbon_footprint"] = inference_carbon_milestone
+            head_results[milestone_key]["inference_metrics"]["carbon_footprint"] = inference_carbon_milestone
         
         # Try to load milestone training metrics if available (find dynamically)
         milestone_metrics_pattern = os.path.join(experiment_dir, chosen_head, "milestone_*_percent_metrics.json")
@@ -235,8 +238,8 @@ def run_evaluation(head: Optional[str] = None):
             try:
                 with open(milestone_metrics_path, "r", encoding="utf-8") as f:
                     milestone_training_metrics = json.load(f)
-                head_results["milestone_95_percent"]["training_metrics_at_milestone"] = milestone_training_metrics
-                logger.info(f"✓ Loaded 95% milestone training metrics from {milestone_metrics_path}")
+                head_results[milestone_key]["training_metrics_at_milestone"] = milestone_training_metrics
+                logger.info(f"✓ Loaded {milestone_threshold_percent}% milestone training metrics from {milestone_metrics_path}")
             except Exception as e:
                 logger.warning(f"Could not load milestone training metrics: {e}")
     
