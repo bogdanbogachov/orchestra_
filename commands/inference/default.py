@@ -77,8 +77,15 @@ def _predict_default_single(
     tokenizer,
     input_text: str,
     labels=None,
+    max_length: int = 512,
 ) -> Dict[str, Any]:
-    inputs = tokenizer(input_text, return_tensors="pt", padding=True, truncation=True)
+    inputs = tokenizer(
+        input_text,
+        return_tensors="pt",
+        padding="max_length",
+        truncation=True,
+        max_length=max_length,
+    )
     inputs = {k: v.to(model.device) for k, v in inputs.items()}
 
     with torch.no_grad():
@@ -101,6 +108,10 @@ def run_infer_default(
     If input is a path to a JSON file (list of {"text","label"}) OR None -> runs dataset inference and saves predictions.
     """
     model, tokenizer, resolved_adapter_path = _load_default_model_and_tokenizer(adapter_path)
+
+    # Get max_length from training config to match training tokenization
+    training_config = CONFIG.get("training", {})
+    max_length = training_config.get("max_length", 512)
 
     # Dataset mode
     if input_text_or_json is None or (isinstance(input_text_or_json, (str, os.PathLike)) and os.path.exists(str(input_text_or_json))):
@@ -143,7 +154,7 @@ def run_infer_default(
             text = item["text"]
             true_label = item.get("label")
             start = time.time()
-            out = _predict_default_single(model, tokenizer, text, labels=None)
+            out = _predict_default_single(model, tokenizer, text, labels=None, max_length=max_length)
             latency_ms = (time.time() - start) * 1000.0
             probs = out["probs"].squeeze(0).detach().cpu().tolist()
             pred = int(int(torch.tensor(probs).argmax().item()))
@@ -151,7 +162,13 @@ def run_infer_default(
             # Calculate FLOPs on first sample using standard industry approach (thop)
             if i == 0:
                 try:
-                    inputs = tokenizer(text, return_tensors="pt", padding=True, truncation=True)
+                    inputs = tokenizer(
+                        text,
+                        return_tensors="pt",
+                        padding="max_length",
+                        truncation=True,
+                        max_length=max_length,
+                    )
                     inputs = {k: v.to(device) for k, v in inputs.items()}
                     flops_per_sample = calculate_flops_for_transformer(
                         model, inputs["input_ids"], inputs.get("attention_mask")
@@ -244,4 +261,6 @@ def run_infer_default(
         return payload
 
     # Single-text mode
-    return _predict_default_single(model, tokenizer, str(input_text_or_json), labels=labels)
+    training_config = CONFIG.get("training", {})
+    max_length = training_config.get("max_length", 512)
+    return _predict_default_single(model, tokenizer, str(input_text_or_json), labels=labels, max_length=max_length)
