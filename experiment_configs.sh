@@ -43,8 +43,8 @@ add_experiments "35_l_default" "default_head" "False" "mean" "False" "True" "Fal
 add_experiments "35_l_custom_last" "custom_head" "True" "last" "False" "False" "True" 9 10 10
 #add_experiments "35_l_custom_max" "custom_head" "True" "max" "False" "False" "True" 7 1 3
 #add_experiments "35_l_custom_mean" "custom_head" "True" "mean" "False" "False" "True" 7 1 3
-#add_experiments "35_l_custom_attention" "custom_head" "True" "attention" "False" "False" "True" 7 1 3
+add_experiments "35_l_custom_attention" "custom_head" "True" "attention" "False" "False" "True" 9 10 10
 add_experiments "35_l_custom_fft_last" "custom_head" "True" "last" "True" "False" "True" 9 10 10
 #add_experiments "35_l_custom_fft_max" "custom_head" "True" "max" "True" "False" "True" 7 1 3
 #add_experiments "35_l_custom_fft_mean" "custom_head" "True" "mean" "True" "False" "True" 7 1 3
-#add_experiments "35_l_custom_fft_attention" "custom_head" "True" "attention" "True" "False" "True" 7 1 3
+add_experiments "35_l_custom_fft_attention" "custom_head" "True" "attention" "True" "False" "True" 9 10 10
