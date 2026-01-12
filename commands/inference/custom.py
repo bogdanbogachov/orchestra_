@@ -18,8 +18,19 @@ def _resolve_custom_adapter_path(adapter_path: Optional[str]) -> str:
         return adapter_path
     paths_config = CONFIG["paths"]
     experiment_name = CONFIG.get("experiment", "orchestra")
-
-    return os.path.join(paths_config["experiments"], experiment_name, "custom_head")
+    
+    # Extract global_exp_num and restructure path
+    import re
+    match = re.match(r'^(.+)_(\d+)_(\d+)$', experiment_name)
+    if match:
+        base_name = match.group(1)
+        global_exp_num = match.group(2)
+        per_config_exp_num = match.group(3)
+        base_with_per_config = f"{base_name}_{per_config_exp_num}"
+        return os.path.join(paths_config["experiments"], global_exp_num, base_with_per_config, "custom_head")
+    else:
+        # Fallback for non-standard experiment names
+        return os.path.join(paths_config["experiments"], experiment_name, "custom_head")
 
 
 def _load_custom_model_tokenizer_and_head(adapter_path: Optional[str] = None):
@@ -113,7 +124,7 @@ def run_infer_custom(
             data = json.load(f)
 
         if output_path is None:
-            output_path = os.path.join(os.path.dirname(resolved_adapter_path), "custom_head", "test_predictions.json")
+            output_path = os.path.join(resolved_adapter_path, "test_predictions.json")
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
         results: List[Dict[str, Any]] = []

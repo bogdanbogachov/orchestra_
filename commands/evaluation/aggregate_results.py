@@ -78,13 +78,12 @@ def extract_base_name(experiment_name: str) -> Optional[str]:
     """
     Extract base experiment name from full experiment name.
     
-    Example: "35_l_default_6_1" -> "35_l_default"
-    Pattern: base_name_global_exp_num_per_config_exp_num
+    Example: "35_l_default_10" -> "35_l_default"
+    Pattern: base_name_per_config_exp_num (after removing global_exp_num from path)
     """
-    # Pattern: base_name_global_exp_num_per_config_exp_num
-    # We want to extract everything before the last two numbers (separated by underscores)
-    # Match: any characters, then _number_number at the end
-    match = re.match(r'^(.+)_(\d+)_(\d+)$', experiment_name)
+    # Pattern: base_name_per_config_exp_num
+    # We want to extract everything before the last number
+    match = re.match(r'^(.+)_(\d+)$', experiment_name)
     if match:
         return match.group(1)
     return None
@@ -94,12 +93,25 @@ def extract_run_number(experiment_name: str) -> Optional[int]:
     """
     Extract per-config experiment number (run number) from full experiment name.
     
-    Example: "35_l_default_6_1" -> 1
+    Example: "35_l_default_10" -> 10
+    Pattern: base_name_per_config_exp_num
+    """
+    match = re.match(r'^(.+)_(\d+)$', experiment_name)
+    if match:
+        return int(match.group(2))
+    return None
+
+
+def extract_global_exp_num(experiment_name: str) -> Optional[int]:
+    """
+    Extract global experiment number from full experiment name.
+    
+    Example: "35_l_default_9_10" -> 9
     Pattern: base_name_global_exp_num_per_config_exp_num
     """
     match = re.match(r'^(.+)_(\d+)_(\d+)$', experiment_name)
     if match:
-        return int(match.group(3))
+        return int(match.group(2))
     return None
 
 
@@ -166,7 +178,7 @@ def extract_flat_metrics(results: Dict[str, Any]) -> Dict[str, float]:
     return metrics
 
 
-def aggregate_metrics(experiments_dir: str, base_names: List[Tuple[str, str]]) -> Dict[str, Dict[str, List[float]]]:
+def aggregate_metrics(experiments_dir: str, base_names: List[Tuple[str, str]], global_exp_num: Optional[int] = None) -> Dict[str, Dict[str, List[float]]]:
     """
     Aggregate metrics across all runs of each experiment type.
     Excludes the first run (cold start) from each experiment type.
@@ -174,6 +186,7 @@ def aggregate_metrics(experiments_dir: str, base_names: List[Tuple[str, str]]) -
     Args:
         experiments_dir: Path to experiments directory
         base_names: List of (base_name, eval_head) tuples
+        global_exp_num: Optional global experiment number to filter by. If None, uses first found.
     
     Returns:
         Dictionary mapping base_name -> metric_name -> list of values
@@ -183,11 +196,28 @@ def aggregate_metrics(experiments_dir: str, base_names: List[Tuple[str, str]]) -
     if not os.path.exists(experiments_dir):
         raise FileNotFoundError(f"Experiments directory not found: {experiments_dir}")
     
+    # Determine which global_exp_num to use
+    if global_exp_num is None:
+        # Find the first available global_exp_num directory
+        subdirs = [d for d in os.listdir(experiments_dir) 
+                   if os.path.isdir(os.path.join(experiments_dir, d)) and d.isdigit()]
+        if not subdirs:
+            raise ValueError(f"No global experiment number directories found in {experiments_dir}")
+        global_exp_num = int(sorted(subdirs)[0])
+        logger.info(f"No global_exp_num specified, using first available: {global_exp_num}")
+    
+    # Use the global_exp_num subdirectory
+    global_exp_dir = os.path.join(experiments_dir, str(global_exp_num))
+    if not os.path.exists(global_exp_dir):
+        raise FileNotFoundError(f"Global experiment directory not found: {global_exp_dir}")
+    
+    logger.info(f"Aggregating results from global experiment number: {global_exp_num}")
+    
     # First pass: collect all runs with their run numbers, grouped by base_name
     runs_by_base = defaultdict(list)  # base_name -> [(run_number, item, eval_head, exp_path), ...]
     
-    for item in os.listdir(experiments_dir):
-        exp_path = os.path.join(experiments_dir, item)
+    for item in os.listdir(global_exp_dir):
+        exp_path = os.path.join(global_exp_dir, item)
         if not os.path.isdir(exp_path):
             continue
         
@@ -442,13 +472,15 @@ def save_latex_table(df: pd.DataFrame, output_path: str):
 
 
 def run_aggregate_results(experiment_configs_path: str = "experiment_configs.sh",
-                         output_dir: str = "experiment_aggregations"):
+                         output_dir: str = "experiment_aggregations",
+                         global_exp_num: Optional[int] = None):
     """
     Main function to aggregate evaluation results across experiments.
     
     Args:
         experiment_configs_path: Path to experiment_configs.sh
         output_dir: Directory to save aggregated results, tables, and charts
+        global_exp_num: Optional global experiment number to aggregate. If None, uses first available.
     """
     logger.info("=" * 100)
     logger.info("AGGREGATING EXPERIMENT RESULTS")
@@ -467,7 +499,7 @@ def run_aggregate_results(experiment_configs_path: str = "experiment_configs.sh"
     
     # Aggregate metrics
     logger.info(f"Scanning experiments directory: {experiments_dir}")
-    aggregated = aggregate_metrics(experiments_dir, base_names)
+    aggregated = aggregate_metrics(experiments_dir, base_names, global_exp_num=global_exp_num)
     
     if not aggregated:
         raise ValueError("No evaluation results found. Run experiments first.")

@@ -47,7 +47,20 @@ def run_evaluation(head: Optional[str] = None):
     paths_config = CONFIG["paths"]
     experiment_name = CONFIG.get("experiment", "orchestra")
     experiments_dir = paths_config["experiments"]
-    experiment_dir = os.path.join(experiments_dir, experiment_name)
+    
+    # Extract global_exp_num and restructure path
+    import re
+    match = re.match(r'^(.+)_(\d+)_(\d+)$', experiment_name)
+    if match:
+        base_name = match.group(1)
+        global_exp_num = match.group(2)
+        per_config_exp_num = match.group(3)
+        base_with_per_config = f"{base_name}_{per_config_exp_num}"
+        experiment_dir = os.path.join(experiments_dir, global_exp_num, base_with_per_config)
+    else:
+        # Fallback for non-standard experiment names
+        experiment_dir = os.path.join(experiments_dir, experiment_name)
+    
     os.makedirs(experiment_dir, exist_ok=True)
 
     _, labels = load_test_data()
@@ -123,7 +136,7 @@ def run_evaluation(head: Optional[str] = None):
             "memory_info": inference_memory_info,
         },
     }
-    
+
     # Add inference energy and carbon metrics if available
     if inference_energy_consumption:
         head_results["inference_metrics"]["energy_consumption"] = inference_energy_consumption
