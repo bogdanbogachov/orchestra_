@@ -21,7 +21,7 @@ class LlamaClassificationHead(nn.Module):
         fft_result = torch.fft.fft(hidden_states, dim=1)
 
         seq_length = hidden_states.size(1)
-        keep_ratio = 0.5  # Keep 30% of frequencies
+        keep_ratio = 0.3  # Keep 30% of frequencies
         rows_to_keep = max(1, int(seq_length * keep_ratio))
 
         # Create mask that keeps only the first rows_to_keep frequencies
