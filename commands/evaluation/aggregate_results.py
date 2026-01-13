@@ -4,9 +4,6 @@ Aggregate evaluation results across multiple experiment runs.
 This module aggregates metrics from evaluation_results.json files across
 all experiment runs, groups them by experiment type, and generates
 publication-quality tables and charts following ACL/NeurIPS/EMNLP standards.
-
-Note: The first run of each experiment type is excluded from aggregation
-as it may be a cold start that takes significantly longer to complete.
 """
 
 import json
@@ -34,9 +31,9 @@ rcParams['xtick.labelsize'] = 10
 rcParams['ytick.labelsize'] = 10
 rcParams['legend.fontsize'] = 9
 rcParams['figure.titlesize'] = 13
-rcParams['figure.dpi'] = 300
-rcParams['savefig.dpi'] = 300
-rcParams['savefig.bbox'] = 'tight'
+rcParams['figure.dpi'] = 200
+rcParams['savefig.dpi'] = 200
+rcParams['savefig.bbox'] = 'standard'  # Don't use 'tight' to avoid memory issues
 rcParams['savefig.pad_inches'] = 0.1
 
 # Set seaborn style for publication-quality plots
@@ -242,21 +239,13 @@ def aggregate_metrics(experiments_dir: str, base_names: List[Tuple[str, str]], g
         bname, eval_head = matching_config
         runs_by_base[bname].append((run_number, item, eval_head, exp_path))
     
-    # Second pass: sort by run number, exclude first run, then aggregate
+    # Second pass: sort by run number, then aggregate
     for bname, runs in runs_by_base.items():
         # Sort by run number
         runs.sort(key=lambda x: x[0])
         
-        # Exclude the first run (cold start)
-        if len(runs) > 1:
-            runs_to_process = runs[1:]  # Skip first run
-            logger.info(f"Excluding first run (cold start) for {bname}. Processing {len(runs_to_process)} runs out of {len(runs)} total.")
-        else:
-            runs_to_process = runs
-            logger.warning(f"Only {len(runs)} run found for {bname}, cannot exclude cold start.")
-        
-        # Process remaining runs
-        for run_number, item, eval_head, exp_path in runs_to_process:
+        # Process all runs
+        for run_number, item, eval_head, exp_path in runs:
             # Load evaluation results
             results = load_evaluation_results(exp_path, eval_head)
             if results is None:
@@ -275,7 +264,7 @@ def aggregate_metrics(experiments_dir: str, base_names: List[Tuple[str, str]], g
     # Log summary
     for bname in aggregated:
         total_runs = len(aggregated[bname].get('accuracy', []))
-        logger.info(f"Aggregated {total_runs} runs for {bname} (excluding cold start)")
+        logger.info(f"Aggregated {total_runs} runs for {bname}")
     
     return aggregated
 
@@ -396,38 +385,49 @@ def create_charts(aggregated: Dict[str, Dict[str, List[float]]],
         
         # Adjust figure size based on number of experiments
         num_experiments = len(experiment_names)
-        fig_width = max(12, num_experiments * 1.2)
-        fig.set_size_inches(fig_width, 6)
+        # Cap maximum width to prevent memory issues (max 15 inches)
+        # Increase multiplier to give more space for labels
+        fig_width = min(max(12, num_experiments * 1.0), 15)
+        fig_height = 7  # Increase height to accommodate title and labels
+        fig.set_size_inches(fig_width, fig_height)
         
-        # Create bar plot with error bars
+        # Create line plot with error bars
         x_pos = np.arange(len(experiment_names))
-        bars = ax.bar(x_pos, means, yerr=stds, capsize=5, alpha=0.7, 
-                     edgecolor='black', linewidth=1.2)
+        ax.errorbar(x_pos, means, yerr=stds, fmt='-o', capsize=5, capthick=1.5,
+                   markersize=8, linewidth=2, alpha=0.7, 
+                   markerfacecolor='white', markeredgecolor='black', 
+                   markeredgewidth=1.5, ecolor='black', elinewidth=1.5)
         
         # Customize plot
         ax.set_xlabel('Experiment Type', fontweight='bold')
         ax.set_ylabel(_format_metric_name(metric), fontweight='bold')
         ax.set_title(f'{_format_metric_name(metric)} Across Experiments', 
-                    fontweight='bold', pad=15)
+                    fontweight='bold', pad=20)
         ax.set_xticks(x_pos)
         ax.set_xticklabels(experiment_names, rotation=45, ha='right')
         ax.grid(True, alpha=0.3, axis='y')
         
-        # Add value labels on bars
+        # Add value labels above each point
         y_max = max(m + s for m, s in zip(means, stds)) if means else 0
         y_range = max(means) - min(means) if means else 1
-        label_offset = max(y_range * 0.02, y_max * 0.01) if y_range > 0 else 0.01
+        label_offset = max(y_range * 0.03, y_max * 0.02) if y_range > 0 else 0.01
         
         for i, (mean, std) in enumerate(zip(means, stds)):
             label_y = mean + std + label_offset
             ax.text(i, label_y, f'{mean:.4f}', ha='center', va='bottom', fontsize=8)
         
-        plt.tight_layout()
+        # Use subplots_adjust instead of tight_layout for better control
+        # Adjust margins to accommodate rotated labels and title
+        # Increase bottom margin for rotated x-axis labels, top for title
+        plt.subplots_adjust(bottom=0.25, top=0.90, left=0.12, right=0.95)
         
         # Save figure
+        # Don't use bbox_inches='tight' as it can cause memory issues with large figures
+        # We already control margins with subplots_adjust
+        # Reduce DPI to 200 to prevent memory issues while maintaining good quality
         safe_metric_name = metric.replace('/', '_').replace(' ', '_')
         output_path = os.path.join(output_dir, f'{safe_metric_name}.png')
-        plt.savefig(output_path, dpi=300, bbox_inches='tight')
+        plt.savefig(output_path, dpi=200)
         logger.info(f"Saved chart: {output_path}")
         plt.close(fig)
 
@@ -482,7 +482,6 @@ def run_aggregate_results(experiment_configs_path: str = "experiment_configs.sh"
         output_dir: Directory to save aggregated results, tables, and charts
         global_exp_num: Optional global experiment number to aggregate. If None, uses first available.
     """
-    logger.info("=" * 100)
     logger.info("AGGREGATING EXPERIMENT RESULTS")
     logger.info("=" * 100)
     
@@ -519,12 +518,6 @@ def run_aggregate_results(experiment_configs_path: str = "experiment_configs.sh"
     # Save as LaTeX
     latex_path = os.path.join(output_dir, "aggregated_metrics.tex")
     save_latex_table(df, latex_path)
-    
-    # Print table to console
-    logger.info("\n" + "=" * 100)
-    logger.info("AGGREGATED METRICS TABLE")
-    logger.info("=" * 100)
-    print(df.to_string(index=False))
     
     # Create charts
     logger.info("\nCreating charts...")
