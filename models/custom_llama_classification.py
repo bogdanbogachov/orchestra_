@@ -21,19 +21,22 @@ class LlamaClassificationHead(nn.Module):
         fft_result = torch.fft.fft(hidden_states, dim=1)
 
         seq_length = hidden_states.size(1)
-        keep_ratio = 0.3  # Keep 30% of frequencies
-        rows_to_keep = max(1, int(seq_length * keep_ratio))
+        rows_to_keep = max(1, int(seq_length * 0.3))
 
-        # Create mask that keeps only the first rows_to_keep frequencies
         mask = torch.zeros(seq_length, device=hidden_states.device, dtype=torch.float32)
         mask[:rows_to_keep] = 1.0
+
+        if seq_length > rows_to_keep:
+            neg_start = seq_length - rows_to_keep + 1
+            if neg_start < seq_length:
+                mask[neg_start:] = 1.0
 
         mask = mask.unsqueeze(0).unsqueeze(-1)
         fft_filtered = fft_result * mask
 
         filtered_states = torch.fft.ifft(fft_filtered, dim=1)
         filtered_states = filtered_states.real
-        
+
         return filtered_states
     
     def pool_hidden_states(self, hidden_states, attention_mask=None):
