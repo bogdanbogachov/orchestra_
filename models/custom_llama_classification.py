@@ -21,7 +21,7 @@ class LlamaClassificationHead(nn.Module):
         fft_result = torch.fft.fft(hidden_states, dim=1)
 
         seq_length = hidden_states.size(1)
-        rows_to_keep = max(1, int(seq_length * 0.3))
+        rows_to_keep = max(1, int(seq_length * 0.2))
 
         mask = torch.zeros(seq_length, device=hidden_states.device, dtype=torch.float32)
         mask[:rows_to_keep] = 1.0
