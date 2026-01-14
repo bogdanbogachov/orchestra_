@@ -175,10 +175,9 @@ def extract_flat_metrics(results: Dict[str, Any]) -> Dict[str, float]:
     return metrics
 
 
-def aggregate_metrics(experiments_dir: str, base_names: List[Tuple[str, str]], global_exp_num: Optional[int] = None) -> Dict[str, Dict[str, List[float]]]:
+def aggregate_metrics(experiments_dir: str, base_names: List[Tuple[str, str]], global_exp_num: Optional[int] = None) -> Tuple[Dict[str, Dict[str, List[float]]], int]:
     """
     Aggregate metrics across all runs of each experiment type.
-    Excludes the first run (cold start) from each experiment type.
     
     Args:
         experiments_dir: Path to experiments directory
@@ -186,7 +185,7 @@ def aggregate_metrics(experiments_dir: str, base_names: List[Tuple[str, str]], g
         global_exp_num: Optional global experiment number to filter by. If None, uses first found.
     
     Returns:
-        Dictionary mapping base_name -> metric_name -> list of values
+        Tuple of (aggregated metrics dictionary, global_exp_num used)
     """
     aggregated = defaultdict(lambda: defaultdict(list))
     
@@ -266,7 +265,7 @@ def aggregate_metrics(experiments_dir: str, base_names: List[Tuple[str, str]], g
         total_runs = len(aggregated[bname].get('accuracy', []))
         logger.info(f"Aggregated {total_runs} runs for {bname}")
     
-    return aggregated
+    return aggregated, global_exp_num
 
 
 def compute_statistics(values: List[float]) -> Dict[str, float]:
@@ -472,14 +471,14 @@ def save_latex_table(df: pd.DataFrame, output_path: str):
 
 
 def run_aggregate_results(experiment_configs_path: str = "experiment_configs.sh",
-                         output_dir: str = "experiment_aggregations",
+                         output_dir: str = "aggregations",
                          global_exp_num: Optional[int] = None):
     """
     Main function to aggregate evaluation results across experiments.
     
     Args:
         experiment_configs_path: Path to experiment_configs.sh
-        output_dir: Directory to save aggregated results, tables, and charts
+        output_dir: Base directory to save aggregated results (default: "aggregations")
         global_exp_num: Optional global experiment number to aggregate. If None, uses first available.
     """
     logger.info("AGGREGATING EXPERIMENT RESULTS")
@@ -496,15 +495,17 @@ def run_aggregate_results(experiment_configs_path: str = "experiment_configs.sh"
     if not base_names:
         raise ValueError("No experiment types found in config file")
     
-    # Aggregate metrics
+    # Aggregate metrics (this will determine global_exp_num if None)
     logger.info(f"Scanning experiments directory: {experiments_dir}")
-    aggregated = aggregate_metrics(experiments_dir, base_names, global_exp_num=global_exp_num)
+    aggregated, global_exp_num = aggregate_metrics(experiments_dir, base_names, global_exp_num=global_exp_num)
     
     if not aggregated:
         raise ValueError("No evaluation results found. Run experiments first.")
     
-    # Create output directory
+    # Create output directory structure: aggregations/<global_exp_num>/
+    output_dir = os.path.join(output_dir, str(global_exp_num))
     os.makedirs(output_dir, exist_ok=True)
+    logger.info(f"Output directory: {os.path.abspath(output_dir)}")
     
     # Create aggregation table
     logger.info("Creating aggregation table...")
