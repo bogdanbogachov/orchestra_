@@ -110,9 +110,9 @@ wait_for_job_runtime() {
     # Give the job a moment to appear in the queue
     sleep 2
     
-    # Wait for job to start (max 10 minutes)
+    # Wait for job to start (max 65 seconds)
     # We wait for it to be RUNNING, but PENDING is also acceptable (job exists)
-    local max_wait=600
+    local max_wait=65
     local waited=2
     while ! is_job_running "$job_id"; do
         # Get current status for logging
