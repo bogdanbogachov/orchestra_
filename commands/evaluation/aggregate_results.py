@@ -41,36 +41,6 @@ sns.set_style("whitegrid")
 sns.set_palette("husl")
 
 
-def parse_experiment_configs(config_path: str = "experiment_configs.sh") -> List[Tuple[str, str]]:
-    """
-    Parse experiment_configs.sh to extract base experiment names and their order.
-    
-    Returns:
-        List of tuples (base_name, eval_head) in the order they appear in the config.
-    """
-    if not os.path.exists(config_path):
-        raise FileNotFoundError(f"Experiment config file not found: {config_path}")
-    
-    base_names = []
-    seen = set()
-    
-    with open(config_path, 'r', encoding='utf-8') as f:
-        content = f.read()
-    
-    # Find all add_experiments calls
-    pattern = r'add_experiments\s+"([^"]+)"\s+"([^"]+)"'
-    matches = re.findall(pattern, content)
-    
-    for base_name, eval_head in matches:
-        # Only add unique base names in order
-        if base_name not in seen:
-            base_names.append((base_name, eval_head))
-            seen.add(base_name)
-    
-    logger.info(f"Parsed {len(base_names)} experiment types from {config_path}")
-    return base_names
-
-
 def extract_base_name(experiment_name: str) -> Optional[str]:
     """
     Extract base experiment name from full experiment name.
@@ -94,19 +64,6 @@ def extract_run_number(experiment_name: str) -> Optional[int]:
     Pattern: base_name_per_config_exp_num
     """
     match = re.match(r'^(.+)_(\d+)$', experiment_name)
-    if match:
-        return int(match.group(2))
-    return None
-
-
-def extract_global_exp_num(experiment_name: str) -> Optional[int]:
-    """
-    Extract global experiment number from full experiment name.
-    
-    Example: "35_l_default_9_10" -> 9
-    Pattern: base_name_global_exp_num_per_config_exp_num
-    """
-    match = re.match(r'^(.+)_(\d+)_(\d+)$', experiment_name)
     if match:
         return int(match.group(2))
     return None
@@ -175,17 +132,17 @@ def extract_flat_metrics(results: Dict[str, Any]) -> Dict[str, float]:
     return metrics
 
 
-def aggregate_metrics(experiments_dir: str, base_names: List[Tuple[str, str]], global_exp_num: Optional[int] = None) -> Tuple[Dict[str, Dict[str, List[float]]], int]:
+def aggregate_metrics(experiments_dir: str, global_exp_num: Optional[int] = None) -> Tuple[Dict[str, Dict[str, List[float]]], int]:
     """
     Aggregate metrics across all runs of each experiment type.
     
     Args:
         experiments_dir: Path to experiments directory
-        base_names: List of (base_name, eval_head) tuples
         global_exp_num: Optional global experiment number to filter by. If None, uses first found.
     
     Returns:
         Tuple of (aggregated metrics dictionary, global_exp_num used)
+        Aggregated dict structure: {experiment_name: {metric_name: [values...]}}
     """
     aggregated = defaultdict(lambda: defaultdict(list))
     
@@ -209,61 +166,51 @@ def aggregate_metrics(experiments_dir: str, base_names: List[Tuple[str, str]], g
     
     logger.info(f"Aggregating results from global experiment number: {global_exp_num}")
     
-    # First pass: collect all runs with their run numbers, grouped by base_name
-    runs_by_base = defaultdict(list)  # base_name -> [(run_number, item, eval_head, exp_path), ...]
+    # Collect all experiment directories and their results
+    experiments_found = []
     
     for item in os.listdir(global_exp_dir):
         exp_path = os.path.join(global_exp_dir, item)
         if not os.path.isdir(exp_path):
             continue
         
-        base_name = extract_base_name(item)
-        if base_name is None:
-            continue
-        
-        run_number = extract_run_number(item)
-        if run_number is None:
-            continue
-        
-        # Find matching base name and eval head
-        matching_config = None
-        for bname, eval_head in base_names:
-            if bname == base_name:
-                matching_config = (bname, eval_head)
-                break
-        
-        if matching_config is None:
-            continue
-        
-        bname, eval_head = matching_config
-        runs_by_base[bname].append((run_number, item, eval_head, exp_path))
-    
-    # Second pass: sort by run number, then aggregate
-    for bname, runs in runs_by_base.items():
-        # Sort by run number
-        runs.sort(key=lambda x: x[0])
-        
-        # Process all runs
-        for run_number, item, eval_head, exp_path in runs:
-            # Load evaluation results
-            results = load_evaluation_results(exp_path, eval_head)
+        # Try both heads
+        for head in ["default_head", "custom_head"]:
+            results = load_evaluation_results(exp_path, head)
             if results is None:
-                logger.debug(f"No evaluation results found for {item}/{eval_head}")
                 continue
             
             # Extract metrics
             metrics = extract_flat_metrics(results)
             
+            if not metrics:
+                continue
+            
+            # Use experiment name as key (item is the experiment directory name)
+            # Group by base name if we can extract it, otherwise use full name
+            base_name = extract_base_name(item)
+            if base_name:
+                # Group runs of the same base experiment together
+                experiment_key = base_name
+            else:
+                # Use full experiment name if we can't extract base name
+                experiment_key = item
+            
             # Add to aggregation
             for metric_name, value in metrics.items():
-                aggregated[bname][metric_name].append(value)
+                aggregated[experiment_key][metric_name].append(value)
             
-            logger.debug(f"Loaded metrics from {item}/{eval_head} (run {run_number})")
+            experiments_found.append((item, head))
+            logger.debug(f"Loaded metrics from {item}/{head}")
+    
+    if not experiments_found:
+        logger.warning(f"No evaluation results found in {global_exp_dir}")
+        return aggregated, global_exp_num
     
     # Log summary
-    for bname in aggregated:
-        total_runs = len(aggregated[bname].get('accuracy', []))
-        logger.info(f"Aggregated {total_runs} runs for {bname}")
+    for exp_name in aggregated:
+        total_runs = len(aggregated[exp_name].get('accuracy', []))
+        logger.info(f"Aggregated {total_runs} runs for {exp_name}")
     
     return aggregated, global_exp_num
 
@@ -281,8 +228,7 @@ def compute_statistics(values: List[float]) -> Dict[str, float]:
     }
 
 
-def create_aggregation_table(aggregated: Dict[str, Dict[str, List[float]]], 
-                            base_names: List[Tuple[str, str]]) -> pd.DataFrame:
+def create_aggregation_table(aggregated: Dict[str, Dict[str, List[float]]]) -> pd.DataFrame:
     """
     Create a pandas DataFrame with aggregated metrics.
     
@@ -290,8 +236,8 @@ def create_aggregation_table(aggregated: Dict[str, Dict[str, List[float]]],
     """
     # Collect all metric names
     all_metrics = set()
-    for bname in aggregated:
-        all_metrics.update(aggregated[bname].keys())
+    for exp_name in aggregated:
+        all_metrics.update(aggregated[exp_name].keys())
     
     # Filter to key metrics for the main table
     key_metrics = [
@@ -307,16 +253,13 @@ def create_aggregation_table(aggregated: Dict[str, Dict[str, List[float]]],
     # Filter to metrics that exist
     key_metrics = [m for m in key_metrics if m in all_metrics]
     
-    # Build table data
+    # Build table data - sort experiment names for consistent ordering
     table_data = []
-    for bname, _ in base_names:
-        if bname not in aggregated:
-            continue
-        
-        row = {'Experiment': bname}
+    for exp_name in sorted(aggregated.keys()):
+        row = {'Experiment': exp_name}
         for metric in key_metrics:
-            if metric in aggregated[bname]:
-                stats = compute_statistics(aggregated[bname][metric])
+            if metric in aggregated[exp_name]:
+                stats = compute_statistics(aggregated[exp_name][metric])
                 # Format as mean ± std
                 if stats['count'] > 0:
                     row[metric] = f"{stats['mean']:.4f} ± {stats['std']:.4f}"
@@ -331,21 +274,19 @@ def create_aggregation_table(aggregated: Dict[str, Dict[str, List[float]]],
     return df
 
 
-def create_charts(aggregated: Dict[str, Dict[str, List[float]]], 
-                 base_names: List[Tuple[str, str]], 
-                 output_dir: str):
+def create_charts(aggregated: Dict[str, Dict[str, List[float]]], output_dir: str):
     """
     Create publication-quality charts for each metric.
     
-    X-axis: experiment type (in order from config)
+    X-axis: experiment type (sorted alphabetically)
     Y-axis: metric value
     """
     os.makedirs(output_dir, exist_ok=True)
     
     # Collect all metric names
     all_metrics = set()
-    for bname in aggregated:
-        all_metrics.update(aggregated[bname].keys())
+    for exp_name in aggregated:
+        all_metrics.update(aggregated[exp_name].keys())
     
     # Filter to key metrics for charts
     key_metrics = [
@@ -368,13 +309,14 @@ def create_charts(aggregated: Dict[str, Dict[str, List[float]]],
         means = []
         stds = []
         
-        for bname, _ in base_names:
-            if bname not in aggregated or metric not in aggregated[bname]:
+        # Sort experiment names for consistent ordering
+        for exp_name in sorted(aggregated.keys()):
+            if metric not in aggregated[exp_name]:
                 continue
             
-            stats = compute_statistics(aggregated[bname][metric])
+            stats = compute_statistics(aggregated[exp_name][metric])
             if stats['count'] > 0:
-                experiment_names.append(bname)
+                experiment_names.append(exp_name)
                 means.append(stats['mean'])
                 stds.append(stats['std'])
         
@@ -470,16 +412,15 @@ def save_latex_table(df: pd.DataFrame, output_path: str):
     logger.info(f"Saved LaTeX table: {output_path}")
 
 
-def run_aggregate_results(experiment_configs_path: str = "experiment_configs.sh",
-                         output_dir: str = "aggregations",
+def run_aggregate_results(output_dir: str = "aggregations",
                          global_exp_num: Optional[int] = None):
     """
     Main function to aggregate evaluation results across experiments.
     
     Args:
-        experiment_configs_path: Path to experiment_configs.sh
         output_dir: Base directory to save aggregated results (default: "aggregations")
-        global_exp_num: Optional global experiment number to aggregate. If None, uses first available.
+        global_exp_num: Optional global experiment number to aggregate. 
+                       If None, aggregates all global experiments separately.
     """
     logger.info("AGGREGATING EXPERIMENT RESULTS")
     logger.info("=" * 100)
@@ -488,56 +429,74 @@ def run_aggregate_results(experiment_configs_path: str = "experiment_configs.sh"
     paths_config = CONFIG.get("paths", {})
     experiments_dir = paths_config.get("experiments", "experiments")
     
-    # Parse experiment configs
-    logger.info(f"Parsing experiment configs from {experiment_configs_path}")
-    base_names = parse_experiment_configs(experiment_configs_path)
+    # Determine which global experiment numbers to process
+    if global_exp_num is not None:
+        # Process single global experiment
+        global_exp_nums = [global_exp_num]
+    else:
+        # Process all global experiments
+        if not os.path.exists(experiments_dir):
+            raise FileNotFoundError(f"Experiments directory not found: {experiments_dir}")
+        
+        subdirs = [d for d in os.listdir(experiments_dir) 
+                   if os.path.isdir(os.path.join(experiments_dir, d)) and d.isdigit()]
+        if not subdirs:
+            raise ValueError(f"No global experiment number directories found in {experiments_dir}")
+        
+        global_exp_nums = sorted([int(d) for d in subdirs])
+        logger.info(f"No global_exp_num specified, processing all global experiments: {global_exp_nums}")
     
-    if not base_names:
-        raise ValueError("No experiment types found in config file")
-    
-    # Aggregate metrics (this will determine global_exp_num if None)
-    logger.info(f"Scanning experiments directory: {experiments_dir}")
-    aggregated, global_exp_num = aggregate_metrics(experiments_dir, base_names, global_exp_num=global_exp_num)
-    
-    if not aggregated:
-        raise ValueError("No evaluation results found. Run experiments first.")
-    
-    # Create output directory structure: aggregations/<global_exp_num>/
-    output_dir = os.path.join(output_dir, str(global_exp_num))
-    os.makedirs(output_dir, exist_ok=True)
-    logger.info(f"Output directory: {os.path.abspath(output_dir)}")
-    
-    # Create aggregation table
-    logger.info("Creating aggregation table...")
-    df = create_aggregation_table(aggregated, base_names)
-    
-    # Save as CSV
-    csv_path = os.path.join(output_dir, "aggregated_metrics.csv")
-    df.to_csv(csv_path, index=False)
-    logger.info(f"Saved CSV table: {csv_path}")
-    
-    # Save as LaTeX
-    latex_path = os.path.join(output_dir, "aggregated_metrics.tex")
-    save_latex_table(df, latex_path)
-    
-    # Create charts
-    logger.info("\nCreating charts...")
-    charts_dir = os.path.join(output_dir, "charts")
-    create_charts(aggregated, base_names, charts_dir)
-    
-    # Save detailed JSON with all statistics
-    detailed_stats = {}
-    for bname in aggregated:
-        detailed_stats[bname] = {}
-        for metric in aggregated[bname]:
-            detailed_stats[bname][metric] = compute_statistics(aggregated[bname][metric])
-    
-    json_path = os.path.join(output_dir, "detailed_statistics.json")
-    with open(json_path, 'w', encoding='utf-8') as f:
-        json.dump(detailed_stats, f, indent=2)
-    logger.info(f"Saved detailed statistics: {json_path}")
+    # Process each global experiment
+    for exp_num in global_exp_nums:
+        logger.info(f"\n{'=' * 100}")
+        logger.info(f"Processing global experiment {exp_num}")
+        logger.info(f"{'=' * 100}")
+        
+        # Aggregate metrics
+        logger.info(f"Scanning experiments directory: {experiments_dir}")
+        aggregated, used_exp_num = aggregate_metrics(experiments_dir, global_exp_num=exp_num)
+        
+        if not aggregated:
+            logger.warning(f"No evaluation results found for global experiment {exp_num}. Skipping...")
+            continue
+        
+        # Create output directory structure: aggregations/<global_exp_num>/
+        exp_output_dir = os.path.join(output_dir, str(used_exp_num))
+        os.makedirs(exp_output_dir, exist_ok=True)
+        logger.info(f"Output directory: {os.path.abspath(exp_output_dir)}")
+        
+        # Create aggregation table
+        logger.info("Creating aggregation table...")
+        df = create_aggregation_table(aggregated)
+        
+        # Save as CSV
+        csv_path = os.path.join(exp_output_dir, "aggregated_metrics.csv")
+        df.to_csv(csv_path, index=False)
+        logger.info(f"Saved CSV table: {csv_path}")
+        
+        # Save as LaTeX
+        latex_path = os.path.join(exp_output_dir, "aggregated_metrics.tex")
+        save_latex_table(df, latex_path)
+        
+        # Create charts
+        logger.info("\nCreating charts...")
+        charts_dir = os.path.join(exp_output_dir, "charts")
+        create_charts(aggregated, charts_dir)
+        
+        # Save detailed JSON with all statistics
+        detailed_stats = {}
+        for exp_name in aggregated:
+            detailed_stats[exp_name] = {}
+            for metric in aggregated[exp_name]:
+                detailed_stats[exp_name][metric] = compute_statistics(aggregated[exp_name][metric])
+        
+        json_path = os.path.join(exp_output_dir, "detailed_statistics.json")
+        with open(json_path, 'w', encoding='utf-8') as f:
+            json.dump(detailed_stats, f, indent=2)
+        logger.info(f"Saved detailed statistics: {json_path}")
+        
+        logger.info(f"\n✓ Aggregation complete for global experiment {used_exp_num}! Results saved to {exp_output_dir}")
     
     logger.info("\n" + "=" * 100)
-    logger.info(f"✓ Aggregation complete! Results saved to {output_dir}")
+    logger.info(f"✓ All aggregations complete! Results saved to {output_dir}")
     logger.info("=" * 100)
-
