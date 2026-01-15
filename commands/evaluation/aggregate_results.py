@@ -228,6 +228,41 @@ def compute_statistics(values: List[float]) -> Dict[str, float]:
     }
 
 
+def get_experiment_sort_key(exp_name: str) -> int:
+    """
+    Get sort key for experiment name to order them in a specific sequence.
+    
+    Order: default, custom last, custom max, custom mean, custom attention,
+           custom fft last, custom fft max, custom fft mean, custom fft attention
+    
+    Returns a sort key (lower number = earlier in order).
+    """
+    exp_lower = exp_name.lower()
+    
+    # Check for default (not custom)
+    if 'default' in exp_lower and 'custom' not in exp_lower:
+        return 1
+    
+    # Check for FFT experiments (they should come after non-FFT)
+    has_fft = 'fft' in exp_lower
+    
+    # Base value: 2 for non-FFT custom, 6 for FFT custom
+    base = 6 if has_fft else 2
+    
+    # Add offset based on pooling strategy
+    if 'last' in exp_lower:
+        return base + 0  # 2 or 6
+    elif 'max' in exp_lower:
+        return base + 1  # 3 or 7
+    elif 'mean' in exp_lower:
+        return base + 2  # 4 or 8
+    elif 'attention' in exp_lower:
+        return base + 3  # 5 or 9
+    
+    # Default: put unknown patterns at the end
+    return 100
+
+
 def create_aggregation_table(aggregated: Dict[str, Dict[str, List[float]]]) -> pd.DataFrame:
     """
     Create a pandas DataFrame with aggregated metrics.
@@ -253,9 +288,10 @@ def create_aggregation_table(aggregated: Dict[str, Dict[str, List[float]]]) -> p
     # Filter to metrics that exist
     key_metrics = [m for m in key_metrics if m in all_metrics]
     
-    # Build table data - sort experiment names for consistent ordering
+    # Build table data - sort experiment names using custom order
     table_data = []
-    for exp_name in sorted(aggregated.keys()):
+    sorted_exp_names = sorted(aggregated.keys(), key=get_experiment_sort_key)
+    for exp_name in sorted_exp_names:
         row = {'Experiment': exp_name}
         for metric in key_metrics:
             if metric in aggregated[exp_name]:
@@ -309,8 +345,9 @@ def create_charts(aggregated: Dict[str, Dict[str, List[float]]], output_dir: str
         means = []
         stds = []
         
-        # Sort experiment names for consistent ordering
-        for exp_name in sorted(aggregated.keys()):
+        # Sort experiment names using custom order
+        sorted_exp_names = sorted(aggregated.keys(), key=get_experiment_sort_key)
+        for exp_name in sorted_exp_names:
             if metric not in aggregated[exp_name]:
                 continue
             
