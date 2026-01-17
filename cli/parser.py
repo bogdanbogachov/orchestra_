@@ -6,6 +6,7 @@ def str_to_bool(v):
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     parser.add_argument("--preprocess_data", type=str_to_bool, default=False)
+    parser.add_argument("--add_noise", type=str_to_bool, default=False)
     parser.add_argument("--finetune", type=str_to_bool, default=False)
     parser.add_argument("--infer_default", type=str_to_bool, default=False)
     parser.add_argument("--infer_custom", type=str_to_bool, default=False)

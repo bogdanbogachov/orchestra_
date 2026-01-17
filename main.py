@@ -1,5 +1,6 @@
 from cli.parser import build_parser
 from commands.data_processing.preprocess import run_preprocess
+from commands.data_processing.add_noise import run_add_noise
 from commands.training.finetune import run_finetune
 from commands.inference.default import run_infer_default
 from commands.inference.custom import run_infer_custom
@@ -19,6 +20,12 @@ if __name__ == '__main__':
         logger.info("STEP: PREPROCESS DATA")
         logger.info("=" * 100)
         run_preprocess()
+    
+    if args.add_noise:
+        logger.info("=" * 100)
+        logger.info("STEP: ADD NOISE")
+        logger.info("=" * 100)
+        run_add_noise()
     
     if args.finetune:
         logger.info("=" * 100)
