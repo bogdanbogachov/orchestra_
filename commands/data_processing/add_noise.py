@@ -3,28 +3,28 @@ import random
 from config import CONFIG
 from logger_config import logger
 
-# Predefined casual language phrases (at least 5 words each) with typo patterns
+# Predefined casual language phrases (at least 10 words each) with typo patterns
 CASUAL_PHRASES = [
-    "um like you know what i mean",
-    "so yeah i guess that works",
-    "well actually i think maybe",
-    "oh wait let me check that",
-    "hmm i dunno about that one",
-    "like seriously what the heck",
-    "okay so basically what happened",
-    "right so i was thinking",
-    "yeah so like i mean",
-    "well you see the thing is",
-    "i mean like honestly though",
-    "so basically what i need",
-    "um yeah so about that",
-    "like i dont really know",
-    "well i guess we could try",
-    "so like what do you think",
-    "yeah i mean that makes sense",
-    "okay so here is the deal",
-    "right so let me explain this",
-    "well actually i was wondering"
+    "um like you know what i mean so yeah basically",
+    "so yeah i guess that works well actually you see",
+    "well actually i think maybe we should consider this",
+    "oh wait let me check that real quick before we proceed",
+    "hmm i dunno about that one to be completely honest with you",
+    "like seriously what the heck is going on here right now",
+    "okay so basically what happened was that we tried something new",
+    "right so i was thinking maybe we could try a different approach",
+    "yeah so like i mean honestly it makes sense when you think about it",
+    "well you see the thing is that we need to figure this out together",
+    "i mean like honestly though i dont really know what to tell you",
+    "so basically what i need is for you to understand the situation better",
+    "um yeah so about that i was wondering if we could talk about it",
+    "like i dont really know how to explain this but here goes nothing",
+    "well i guess we could try something different if that works for you",
+    "so like what do you think about this whole situation we are facing",
+    "yeah i mean that makes sense when you consider all the factors involved",
+    "okay so here is the deal we need to make a decision pretty soon",
+    "right so let me explain this to you in a way that makes sense",
+    "well actually i was wondering if maybe we should reconsider our options here"
 ]
 
 # Typo patterns: character substitutions that are common in casual typing
@@ -66,20 +66,20 @@ def apply_typos(text, typo_probability=0.15):
 
 def generate_noise_phrase():
     """
-    Generate a casual language phrase with typos (at least 5 words).
-    Returns a string with at least 5 words.
+    Generate a casual language phrase with typos (at least 10 words).
+    Returns a string with at least 10 words.
     """
     # Select a random phrase
     phrase = random.choice(CASUAL_PHRASES)
     
-    # Ensure it has at least 5 words
+    # Ensure it has at least 10 words
     words = phrase.split()
-    if len(words) < 5:
+    if len(words) < 10:
         # Add more casual words if needed
-        extra_words = ["like", "um", "yeah", "so", "well", "actually", "i mean"]
-        max_iterations = 10  # Safety limit to prevent infinite loops
+        extra_words = ["like", "um", "yeah", "so", "well", "actually", "i mean", "you know", "right", "okay"]
+        max_iterations = 20  # Safety limit to prevent infinite loops
         iterations = 0
-        while len(words) < 5 and iterations < max_iterations:
+        while len(words) < 10 and iterations < max_iterations:
             words.append(random.choice(extra_words))
             iterations += 1
         phrase = " ".join(words)
@@ -105,8 +105,8 @@ def insert_noise_into_text(text, noise_phrase):
 
 def run_add_noise():
     """
-    Add noise (casual language with typos) to every second question in train_data.json.
-    The noise is at least 5 words long.
+    Add noise (casual language with typos) to every question in train_data.json.
+    The noise is at least 10 words long.
     """
     paths_config = CONFIG['paths']
     train_file = paths_config['data']['train']
@@ -118,12 +118,12 @@ def run_add_noise():
     original_count = len(data)
     logger.info(f"Loaded {original_count} training examples")
     
-    # Process every second question (indices 1, 3, 5, ...)
+    # Process every question
     modified_count = 0
-    for i in range(1, len(data), 2):  # Start at 1, step by 2
+    for i in range(len(data)):  # Process all questions
         original_text = data[i]["text"]
         
-        # Generate noise phrase (at least 5 words with typos)
+        # Generate noise phrase (at least 10 words with typos)
         noise_phrase = generate_noise_phrase()
         
         # Insert noise into the text
@@ -142,6 +142,6 @@ def run_add_noise():
         json.dump(data, f, indent=2, ensure_ascii=False)
     
     logger.info(f"✓ Added noise to {modified_count} out of {original_count} training examples")
-    logger.info(f"✓ Modified every second question (indices 1, 3, 5, ...)")
-    logger.info(f"✓ Each noise phrase contains at least 5 words with casual typos")
+    logger.info(f"✓ Modified every question (all {original_count} examples)")
+    logger.info(f"✓ Each noise phrase contains at least 10 words with casual typos")
 
