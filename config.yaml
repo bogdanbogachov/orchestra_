@@ -47,7 +47,7 @@ training:
   warmup_ratio: 0.1  # 10% of training steps for warmup
   # Early stopping
   early_stopping_patience: 3  # Number of evaluation steps without improvement before stopping
-  early_stopping_threshold: 0.0001  # Minimum change to qualify as an improvement (1e-4 - filters noise but allows small improvements)
+  early_stopping_threshold: 0.003  # Minimum change to qualify as an improvement
   # Evaluation and saving
   logging_steps: 10
   eval_steps: 25
