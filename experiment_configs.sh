@@ -39,7 +39,7 @@ add_experiments() {
 }
 
 # Format: add_experiments "base_name" "eval_head" "custom" "pool" "fft" "d_inf" "c_inf" global_exp_num per_config_start per_config_end
-add_experiments "banking77_noise_default" "default_head" "False" "mean" "False" "True" "False" 25 1 3
+#add_experiments "banking77_noise_default" "default_head" "False" "mean" "False" "True" "False" 25 1 3
 #add_experiments "banking77_noise_custom_last" "custom_head" "True" "last" "False" "False" "True" 24 1 4
 #add_experiments "banking77_noise_custom_max" "custom_head" "True" "max" "False" "False" "True" 24 1 4
 #add_experiments "banking77_noise_custom_mean" "custom_head" "True" "mean" "False" "False" "True" 25 1 3
