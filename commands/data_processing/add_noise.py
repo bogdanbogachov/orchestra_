@@ -3,52 +3,22 @@ import random
 from config import CONFIG
 from logger_config import logger
 
-# Predefined casual language phrases for TRAIN set (at least 10 words each) with typo patterns
-CASUAL_PHRASES_TRAIN = [
-    "um like you know what i mean so yeah basically",
-    "so yeah i guess that works well actually you see",
-    "well actually i think maybe we should consider this",
-    "oh wait let me check that real quick before we proceed",
-    "hmm i dunno about that one to be completely honest with you",
-    "like seriously what the heck is going on here right now",
-    "okay so basically what happened was that we tried something new",
-    "right so i was thinking maybe we could try a different approach",
-    "yeah so like i mean honestly it makes sense when you think about it",
-    "well you see the thing is that we need to figure this out together",
-    "i mean like honestly though i dont really know what to tell you",
-    "so basically what i need is for you to understand the situation better",
-    "um yeah so about that i was wondering if we could talk about it",
-    "like i dont really know how to explain this but here goes nothing",
-    "well i guess we could try something different if that works for you",
-    "so like what do you think about this whole situation we are facing",
-    "yeah i mean that makes sense when you consider all the factors involved",
-    "okay so here is the deal we need to make a decision pretty soon",
-    "right so let me explain this to you in a way that makes sense",
-    "well actually i was wondering if maybe we should reconsider our options here"
+# High-frequency noise words for interleaving (TRAIN set)
+# Banking-specific words that create rapid oscillations when interleaved with original text
+HIGH_FREQ_NOISE_TRAIN = [
+    "um", "uh", "like", "you know", "i mean", "actually", 
+    "basically", "well", "so", "right", "okay", "please", 
+    "thank you", "sorry", "urgent", "asap", "status", 
+    "check", "verify", "confirm", "important", "need help"
 ]
 
-# Predefined casual language phrases for TEST set (completely different from train, at least 10 words each)
-CASUAL_PHRASES_TEST = [
-    "dude that sounds pretty cool to me man i gotta say",
-    "bro honestly i have no clue what you are talking about here",
-    "man this is getting really complicated if you ask me personally",
-    "yo check it out i just realized something important about this whole thing",
-    "hey listen up because i need to tell you something really interesting",
-    "dang that is wild i never would have thought about it that way",
-    "wow that is actually pretty amazing when you stop and think about it",
-    "man oh man this is turning into quite the situation we got here",
-    "hey you know what i just remembered something that might be relevant",
-    "dude seriously this is way more complex than i originally thought it was",
-    "bro i gotta be straight with you this whole thing is confusing me",
-    "man i wish i could help you out more but i am just not sure",
-    "yo real talk this is one of those things that takes time to understand",
-    "hey look i am trying my best here but this is pretty difficult",
-    "dang it seems like we are going in circles with this conversation here",
-    "wow i cannot believe how much we have covered in such a short time",
-    "man this conversation is really making me think about things differently now",
-    "hey you seem pretty knowledgeable about this stuff which is really helpful",
-    "dude i appreciate you taking the time to explain all of this to me",
-    "bro honestly i think we are making good progress here so keep going"
+# High-frequency noise words for interleaving (TEST set - completely different banking style)
+HIGH_FREQ_NOISE_TEST = [
+    "excuse me", "pardon", "if you could", "would you mind",
+    "right?", "correct?", "is it?", "are you sure?", 
+    "really?", "seriously?", "honestly?", "for real?",
+    "critical", "stuck", "can't access", "not working", 
+    "broken", "issue", "problem", "help me"
 ]
 
 # Typo patterns: character substitutions that are common in casual typing
@@ -88,119 +58,90 @@ def apply_typos(text, typo_probability=0.15):
             result.append(char)
     return ''.join(result)
 
-def _generate_phrases_from_templates(templates, is_train=True):
+def generate_high_freq_noise_words(is_train=True, min_words=10):
     """
-    Generate a large list of unique phrases from templates.
-    This ensures we have enough variety so each phrase repeats <= 25 times.
-    """
-    phrases = []
-    
-    # Base templates for train set
-    if is_train:
-        starters = ["um", "so", "well", "oh", "hmm", "like", "okay", "right", "yeah", "i mean"]
-        connectors = ["like", "you know", "i mean", "honestly", "actually", "basically", "so yeah", "well actually"]
-        middles = ["what i mean", "what happened", "the thing is", "i was thinking", "i guess", "i dunno", "let me check"]
-        endings = ["basically", "you see", "consider this", "we proceed", "honest with you", "right now", "something new", 
-                  "different approach", "think about it", "together", "tell you", "situation better", "talk about it", 
-                  "here goes nothing", "works for you", "we are facing", "factors involved", "pretty soon", "makes sense",
-                  "reconsider our options", "figure this out", "understand better", "try something", "check that"]
-    else:
-        # Base templates for test set
-        starters = ["dude", "bro", "man", "yo", "hey", "dang", "wow"]
-        connectors = ["that sounds", "honestly", "this is", "i just", "i need", "that is", "i gotta", "real talk"]
-        middles = ["pretty cool", "no clue", "really complicated", "realized something", "tell you something", 
-                  "wild i never", "pretty amazing", "turning into", "remembered something", "way more complex"]
-        endings = ["i gotta say", "talking about here", "ask me personally", "about this whole thing", "really interesting",
-                  "thought about it that way", "stop and think about it", "situation we got here", "might be relevant",
-                  "originally thought it was", "whole thing is confusing me", "just not sure", "takes time to understand",
-                  "pretty difficult", "going in circles", "such a short time", "think about things differently now",
-                  "really helpful", "explain all of this to me", "making good progress"]
-    
-    # Generate combinations
-    for starter in starters:
-        for connector in connectors:
-            for middle in middles:
-                for ending in endings:
-                    phrase = f"{starter} {connector} {middle} {ending}"
-                    words = phrase.split()
-                    if len(words) >= 10:
-                        phrases.append(phrase)
-                    # Add variations with extra words
-                    if len(words) < 10:
-                        extra = random.choice(["to me", "man", "you know", "i think", "maybe", "well", "actually"])
-                        phrase_extended = f"{phrase} {extra}"
-                        if len(phrase_extended.split()) >= 10:
-                            phrases.append(phrase_extended)
-    
-    # Also add the original predefined phrases
-    if is_train:
-        phrases.extend(CASUAL_PHRASES_TRAIN)
-    else:
-        phrases.extend(CASUAL_PHRASES_TEST)
-    
-    # Remove duplicates while preserving order
-    seen = set()
-    unique_phrases = []
-    for phrase in phrases:
-        if phrase not in seen:
-            seen.add(phrase)
-            unique_phrases.append(phrase)
-    
-    return unique_phrases
-
-def generate_noise_phrase(phrases_list=None, is_train=True):
-    """
-    Generate a casual language phrase with typos (at least 10 words).
-    Returns a string with at least 10 words.
+    Generate a list of high-frequency noise words for interleaving.
+    These will create rapid oscillations in hidden states.
     
     Args:
-        phrases_list: List of phrases to choose from (if None, generates dynamically)
         is_train: Whether generating for train set (default: True)
+        min_words: Minimum number of noise words to generate
+    
+    Returns:
+        List of noise words (at least min_words long)
     """
-    # Generate phrases dynamically if not provided or if list is too small
-    if phrases_list is None or len(phrases_list) < 200:
-        # Generate expanded list of phrases
-        phrases_list = _generate_phrases_from_templates([], is_train=is_train)
+    if is_train:
+        noise_words_pool = HIGH_FREQ_NOISE_TRAIN
+    else:
+        noise_words_pool = HIGH_FREQ_NOISE_TEST
     
-    # Select a random phrase
-    phrase = random.choice(phrases_list)
+    # Generate at least min_words noise words by sampling with replacement
+    # This creates repetitive patterns that will produce high-frequency oscillations
+    noise_words = []
+    for _ in range(min_words):
+        noise_words.append(random.choice(noise_words_pool))
     
-    # Ensure it has at least 10 words
-    words = phrase.split()
-    if len(words) < 10:
-        # Add more casual words if needed
-        extra_words = ["like", "um", "yeah", "so", "well", "actually", "i mean", "you know", "right", "okay"]
-        max_iterations = 20  # Safety limit to prevent infinite loops
-        iterations = 0
-        while len(words) < 10 and iterations < max_iterations:
-            words.append(random.choice(extra_words))
-            iterations += 1
-        phrase = " ".join(words)
+    # Apply typos to some words to add variation
+    noisy_words = []
+    for word in noise_words:
+        if random.random() < 0.15:  # 15% chance of typo per word
+            noisy_word = apply_typos(word, typo_probability=0.2)
+            noisy_words.append(noisy_word)
+        else:
+            noisy_words.append(word)
     
-    # Apply typos
-    noisy_phrase = apply_typos(phrase, typo_probability=0.12)
-    
-    return noisy_phrase
+    return noisy_words
 
-def insert_noise_into_text(text, noise_phrase):
+def insert_high_freq_noise(text, noise_words, interleave_ratio=0.5):
     """
-    Insert noise phrase at the beginning of the text.
+    Interleave high-frequency noise words with original text to create rapid oscillations.
+    This creates high-frequency patterns that FFT can filter out.
+    
+    Args:
+        text: Original text
+        noise_words: List of noise words to interleave
+        interleave_ratio: Probability of inserting noise after each original word (0.0-1.0)
+    
+    Returns:
+        Text with interleaved high-frequency noise
     """
     if not text or not text.strip():
-        return noise_phrase
+        return " ".join(noise_words)
     
-    # Insert noise at the beginning
-    return f"{noise_phrase} {text}"
+    original_words = text.split()
+    if len(original_words) == 0:
+        return " ".join(noise_words)
+    
+    # Interleave noise words with original text
+    # This creates high-frequency oscillations: [noise] [original] [noise] [original] ...
+    result_words = []
+    noise_idx = 0
+    
+    for orig_word in original_words:
+        # Add original word
+        result_words.append(orig_word)
+        
+        # Interleave noise word with probability interleave_ratio
+        if random.random() < interleave_ratio and noise_idx < len(noise_words):
+            result_words.append(noise_words[noise_idx])
+            noise_idx = (noise_idx + 1) % len(noise_words)  # Cycle through noise words
+    
+    # Return the interleaved result (don't add unused noise words to the beginning)
+    return " ".join(result_words)
 
 def run_add_noise():
     """
-    Add noise (casual language with typos) to every second question in both train_data.json and test_data.json.
-    The noise is at least 10 words long.
-    Test set uses completely different noise phrases from the train set.
+    Add high-frequency noise (interleaved patterns) to every second question in both train_data.json and test_data.json.
+    The noise is interleaved with original text to create rapid oscillations that FFT can filter.
+    Test set uses completely different noise words from the train set.
     """
     paths_config = CONFIG['paths']
     train_file = paths_config['data']['train']
     test_file = paths_config['data']['test']
+    
+    # Interleave ratio: probability of inserting noise after each original word
+    interleave_ratio = 0.3  # 30% chance = creates moderate high-frequency pattern
+    min_noise_words = 10  # Minimum number of noise words to generate
     
     # Process training set
     logger.info(f"Loading training data from {train_file}")
@@ -214,11 +155,11 @@ def run_add_noise():
     for i in range(1, len(train_data), 2):  # Process every second question (indices 1, 3, 5, ...)
         original_text = train_data[i]["text"]
         
-        # Generate noise phrase using TRAIN-specific phrases (at least 10 words with typos)
-        noise_phrase = generate_noise_phrase(phrases_list=CASUAL_PHRASES_TRAIN, is_train=True)
+        # Generate high-frequency noise words (at least 10 words)
+        noise_words = generate_high_freq_noise_words(is_train=True, min_words=min_noise_words)
         
-        # Insert noise into the text
-        noisy_text = insert_noise_into_text(original_text, noise_phrase)
+        # Interleave noise with original text to create high-frequency oscillations
+        noisy_text = insert_high_freq_noise(original_text, noise_words, interleave_ratio=interleave_ratio)
         
         # Update the data
         train_data[i]["text"] = noisy_text
@@ -246,11 +187,11 @@ def run_add_noise():
     for i in range(1, len(test_data), 2):  # Process every second question (indices 1, 3, 5, ...)
         original_text = test_data[i]["text"]
         
-        # Generate noise phrase using TEST-specific phrases (at least 10 words with typos)
-        noise_phrase = generate_noise_phrase(phrases_list=CASUAL_PHRASES_TEST, is_train=False)
+        # Generate high-frequency noise words using TEST-specific words (at least 10 words)
+        noise_words = generate_high_freq_noise_words(is_train=False, min_words=min_noise_words)
         
-        # Insert noise into the text
-        noisy_text = insert_noise_into_text(original_text, noise_phrase)
+        # Interleave noise with original text to create high-frequency oscillations
+        noisy_text = insert_high_freq_noise(original_text, noise_words, interleave_ratio=interleave_ratio)
         
         # Update the data
         test_data[i]["text"] = noisy_text
@@ -268,9 +209,11 @@ def run_add_noise():
     
     # Summary
     logger.info(f"\n{'=' * 100}")
-    logger.info(f"✓ Noise augmentation complete!")
+    logger.info(f"✓ High-frequency noise augmentation complete!")
     logger.info(f"✓ Training set: {train_modified}/{train_count} examples modified (every second question)")
     logger.info(f"✓ Test set: {test_modified}/{test_count} examples modified (every second question)")
-    logger.info(f"✓ Each noise phrase contains at least 10 words with casual typos")
-    logger.info(f"✓ Test noise phrases are completely different from train noise phrases")
+    logger.info(f"✓ Noise is interleaved with original text (interleave ratio: {interleave_ratio})")
+    logger.info(f"✓ Each example has at least {min_noise_words} noise words creating high-frequency oscillations")
+    logger.info(f"✓ Test noise words are completely different from train noise words")
+    logger.info(f"✓ This high-frequency noise pattern can be filtered by FFT in hidden states")
 
