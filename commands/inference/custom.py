@@ -66,16 +66,28 @@ def _load_custom_model_tokenizer_and_head(adapter_path: Optional[str] = None):
             classifier_state = torch.load(classifier_path, map_location=base_model.device)
             pooling_strategy = model_config["pooling_strategy"]
             use_fft = model_config["use_fft"]
-            logger.info(f"Custom head configuration - Pooling type: {pooling_strategy}, FFT used: {use_fft}")
+            fft_adaptive = model_config.get("fft_adaptive", True)  # Default to True if not specified
+            logger.info(f"Custom head configuration - Pooling type: {pooling_strategy}, FFT used: {use_fft}, FFT adaptive: {fft_adaptive}")
             classifier = LlamaClassificationHead(
                 config=base_model.config,
                 num_labels=model_config["num_labels"],
                 pooling_strategy=pooling_strategy,
                 use_fft=use_fft,
+                fft_adaptive=fft_adaptive,
             ).to(base_model.device)
             classifier.load_state_dict(classifier_state)
         else:
             logger.info("Classifier not found, using randomly initialized classifier")
+            pooling_strategy = model_config["pooling_strategy"]
+            use_fft = model_config["use_fft"]
+            fft_adaptive = model_config.get("fft_adaptive", True)  # Default to True if not specified
+            classifier = LlamaClassificationHead(
+                config=base_model.config,
+                num_labels=model_config["num_labels"],
+                pooling_strategy=pooling_strategy,
+                use_fft=use_fft,
+                fft_adaptive=fft_adaptive,
+            ).to(base_model.device)
 
 
     return base_model, tokenizer, classifier, adapter_path
