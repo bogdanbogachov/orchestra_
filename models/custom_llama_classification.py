@@ -28,6 +28,14 @@ class LlamaClassificationHead(nn.Module):
                 nn.Linear(16, 1),
                 nn.Sigmoid()  # Output: cutoff ratio [0, 1]
             )
+            # Initialize to output ~0.5 (similar to fixed filtering)
+            # This gives a reasonable starting point instead of random initialization
+            with torch.no_grad():
+                # Set bias of final linear layer so sigmoid outputs ~0.5 initially
+                # sigmoid(0) ≈ 0.5, so we want the input to sigmoid to be ~0
+                self.fft_adaptive_network[-2].bias.data.fill_(0.0)
+                # Initialize weights to be small so output is close to 0.5
+                self.fft_adaptive_network[-2].weight.data.normal_(0.0, 0.01)
 
     @staticmethod
     def apply_fft_filter(hidden_states):
@@ -78,21 +86,38 @@ class LlamaClassificationHead(nn.Module):
         # Predict cutoff ratio for each sample in batch
         # Stack statistics: [mean_magnitude, std_magnitude, normalized_seq_len]
         stats = torch.stack([mean_mag, std_mag, torch.full_like(mean_mag, seq_len_norm)], dim=1)  # [batch, 3]
-        cutoff_ratios = self.fft_adaptive_network(stats).squeeze(-1)  # [batch] - cutoff ratio in [0, 1]
+        # Enforce cutoff in [0, 1]: even if network has sigmoid, add explicit sigmoid for safety
+        # This prevents issues if the network architecture changes later
+        cutoff_ratios = torch.sigmoid(self.fft_adaptive_network(stats)).squeeze(-1)  # [batch] - cutoff ratio in [0, 1]
         
-        # Create adaptive mask for each sample
+        # Create soft differentiable mask.
         batch_size, seq_len = hidden_states.size(0), hidden_states.size(1)
-        mask = torch.zeros(batch_size, seq_len, device=hidden_states.device, dtype=torch.float32)
+        # Put tau on the right device/dtype to avoid dtype mixing
+        tau = hidden_states.new_tensor(0.1)  # Temperature: smaller = sharper transition, but still differentiable
         
-        for b in range(batch_size):
-            rows_to_keep = max(1, int(seq_len * cutoff_ratios[b].item()))
-            mask[b, :rows_to_keep] = 1.0
-            
-            # Keep negative frequencies (symmetric in FFT)
-            if seq_len > rows_to_keep:
-                neg_start = seq_len - rows_to_keep + 1
-                if neg_start < seq_len:
-                    mask[b, neg_start:] = 1.0
+        # Create index tensor: [0, 1, 2, ..., seq_len-1]
+        indices = torch.arange(seq_len, device=hidden_states.device, dtype=torch.float32)
+        indices = indices.unsqueeze(0).expand(batch_size, -1)  # [batch, seq_len]
+        
+        # Compute cutoff threshold for each sample
+        cutoff_thresholds = cutoff_ratios.unsqueeze(-1) * seq_len  # [batch, 1]
+        
+        # Soft mask for positive frequencies: sigmoid((threshold - index) / tau)
+        # When index < threshold: sigmoid(positive) → close to 1
+        # When index > threshold: sigmoid(negative) → close to 0
+        mask_pos = torch.sigmoid((cutoff_thresholds - indices) / tau)  # [batch, seq_len]
+        
+        # Also handle negative frequencies (symmetric in FFT)
+        neg_indices = seq_len - indices - 1  # Reverse indices
+        mask_neg = torch.sigmoid((cutoff_thresholds - neg_indices) / tau)  # [batch, seq_len]
+        
+        # Combine both masks: keep if either condition is true
+        # Using maximum (or could use: 1 - (1-mask_pos)*(1-mask_neg) for probabilistic OR)
+        mask = torch.maximum(mask_pos, mask_neg)  # [batch, seq_len]
+        
+        # Ensure at least a small amount of signal is kept (prevent complete filtering)
+        # This adds a small baseline rather than ensuring exactly one frequency
+        mask = mask * 0.95 + 0.05  # Keep at least 5% of signal everywhere
         
         mask = mask.unsqueeze(-1)  # [batch, seq_len, 1]
         fft_filtered = fft_result * mask
