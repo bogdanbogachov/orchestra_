@@ -96,7 +96,7 @@ class LlamaClassificationHead(nn.Module):
         tau = hidden_states.new_tensor(0.1)  # Temperature: smaller = sharper transition, but still differentiable
         
         # Create index tensor: [0, 1, 2, ..., seq_len-1]
-        indices = torch.arange(seq_len, device=hidden_states.device, dtype=torch.float32)
+        indices = torch.arange(seq_len, device=hidden_states.device, dtype=hidden_states.dtype)
         indices = indices.unsqueeze(0).expand(batch_size, -1)  # [batch, seq_len]
         
         # Compute cutoff threshold for each sample
@@ -115,9 +115,10 @@ class LlamaClassificationHead(nn.Module):
         # Using maximum (or could use: 1 - (1-mask_pos)*(1-mask_neg) for probabilistic OR)
         mask = torch.maximum(mask_pos, mask_neg)  # [batch, seq_len]
         
-        # Ensure at least a small amount of signal is kept (prevent complete filtering)
-        # This adds a small baseline rather than ensuring exactly one frequency
-        mask = mask * 0.95 + 0.05  # Keep at least 5% of signal everywhere
+        # Ensure at least a tiny amount of signal is kept (prevent complete filtering)
+        # Use tiny epsilon to avoid pathological "all zeros" case without blunting the filter
+        eps = hidden_states.new_tensor(1e-3)
+        mask = mask * (1 - eps) + eps
         
         mask = mask.unsqueeze(-1)  # [batch, seq_len, 1]
         fft_filtered = fft_result * mask
