@@ -19,11 +19,11 @@ class LlamaClassificationHead(nn.Module):
         
         # Learnable adaptive FFT parameters (only if adaptive is enabled)
         if use_fft and fft_adaptive:
-            # Small network to predict cutoff ratio from sequence statistics
-            # Input: [mean_magnitude, std_magnitude, normalized_seq_len]
+            # Small network to predict cutoff ratio from noise-detection statistics
+            # Input: [high_freq_ratio, spectral_flatness, low_freq_concentration, normalized_seq_len]
             # Output: cutoff ratio [0, 1] via sigmoid
             self.fft_adaptive_network = nn.Sequential(
-                nn.Linear(3, 16),  # Input: [mean_mag, std_mag, seq_len_norm]
+                nn.Linear(4, 16),  # Input: [high_freq_ratio, spectral_flatness, low_freq_concentration, seq_len_norm]
                 nn.ReLU(),
                 nn.Linear(16, 1),
                 nn.Sigmoid()  # Output: cutoff ratio [0, 1]
@@ -66,7 +66,7 @@ class LlamaClassificationHead(nn.Module):
     def apply_adaptive_fft_filter_learnable(self, hidden_states):
         """
         Learnable adaptive FFT filter.
-        Uses a small network to predict optimal cutoff ratio based on sequence statistics.
+        Uses a small network to predict optimal cutoff ratio based on noise-detection statistics.
         Uses shared cutoff per batch for stability, harder mask, and no epsilon.
         
         Args:
@@ -77,19 +77,56 @@ class LlamaClassificationHead(nn.Module):
         """
         fft_result = torch.fft.fft(hidden_states, dim=1)
         
-        # Compute statistics from FFT magnitude
+        # Compute noise-detection statistics from FFT magnitude
         magnitude = torch.abs(fft_result)  # [batch, seq_len, hidden_dim]
-        mean_mag = magnitude.mean(dim=[1, 2])  # [batch] - average magnitude across all frequencies and dimensions
-        std_mag = magnitude.std(dim=[1, 2])    # [batch] - std of magnitude
-        seq_len_norm = hidden_states.size(1) / 512.0  # Normalize by typical max length
+        seq_len = hidden_states.size(1)
+        
+        # Average across hidden dimensions to get frequency profile per sample
+        magnitude_avg = magnitude.mean(dim=2)  # [batch, seq_len] - average across hidden dims
+        
+        # 1. High-frequency energy ratio: noise typically has more energy in high frequencies
+        # Split frequencies into low (first half) and high (second half)
+        mid_point = seq_len // 2
+        low_freq_energy = magnitude_avg[:, :mid_point].sum(dim=1)  # [batch]
+        high_freq_energy = magnitude_avg[:, mid_point:].sum(dim=1)  # [batch]
+        # Avoid division by zero, add small epsilon
+        total_energy = low_freq_energy + high_freq_energy + 1e-8
+        high_freq_ratio = high_freq_energy / total_energy  # [batch] - higher = more noise
+        
+        # 2. Spectral flatness: measures how "noisy" vs "tonal" the spectrum is
+        # Flatness = geometric_mean / arithmetic_mean (in log domain for numerical stability)
+        # Noise has high flatness (flat spectrum), signal has low flatness (peaky spectrum)
+        log_mag = torch.log(magnitude_avg + 1e-8)  # [batch, seq_len]
+        geometric_mean = log_mag.mean(dim=1)  # [batch] - mean of logs = log of geometric mean
+        arithmetic_mean = magnitude_avg.mean(dim=1)  # [batch]
+        log_arithmetic_mean = torch.log(arithmetic_mean + 1e-8)  # [batch]
+        # Spectral flatness = exp(geometric_mean - log_arithmetic_mean)
+        # Higher flatness (closer to 1) = more noise-like
+        spectral_flatness = torch.exp(geometric_mean - log_arithmetic_mean)  # [batch]
+        
+        # 3. Low-frequency concentration: how much energy is in the lowest 25% of frequencies
+        # Signal typically concentrates in low frequencies, noise is more spread out
+        low_quarter = max(1, seq_len // 4)
+        low_quarter_energy = magnitude_avg[:, :low_quarter].sum(dim=1)  # [batch]
+        low_freq_concentration = low_quarter_energy / (total_energy + 1e-8)  # [batch] - higher = more signal-like
+        
+        seq_len_norm = seq_len / 512.0  # Normalize by typical max length
         
         # Use batch-averaged statistics for shared cutoff (more stable than per-sample)
-        batch_mean_mag = mean_mag.mean()
-        batch_std_mag = std_mag.mean()
-        stats = torch.stack([batch_mean_mag, batch_std_mag, torch.tensor(seq_len_norm, device=hidden_states.device)]).unsqueeze(0)  # [1, 3]
+        batch_high_freq_ratio = high_freq_ratio.mean()
+        batch_spectral_flatness = spectral_flatness.mean()
+        batch_low_freq_concentration = low_freq_concentration.mean()
+        
+        stats = torch.stack([
+            batch_high_freq_ratio,
+            batch_spectral_flatness,
+            batch_low_freq_concentration,
+            torch.tensor(seq_len_norm, device=hidden_states.device, dtype=hidden_states.dtype)
+        ]).unsqueeze(0)  # [1, 4]
         
         # Predict single cutoff ratio for entire batch
-        cutoff_ratio = torch.sigmoid(self.fft_adaptive_network(stats)).squeeze()  # scalar
+        # Network already has sigmoid, so don't apply it again
+        cutoff_ratio = self.fft_adaptive_network(stats).squeeze()  # scalar
         
         # Create harder mask with much smaller temperature for sharper cutoff
         batch_size, seq_len = hidden_states.size(0), hidden_states.size(1)
@@ -143,7 +180,7 @@ class LlamaClassificationHead(nn.Module):
         
         elif self.pooling_strategy == "last":
             if attention_mask is not None:
-                seq_lengths = attention_mask.sum(dim=1) - 1
+                seq_lengths = attention_mask.long().sum(dim=1) - 1
                 batch_indices = torch.arange(hidden_states.size(0), device=hidden_states.device)
                 pooled = hidden_states[batch_indices, seq_lengths]
             else:
