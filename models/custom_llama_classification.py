@@ -67,13 +67,13 @@ class LlamaClassificationHead(nn.Module):
         """
         Learnable adaptive FFT filter.
         Uses a small network to predict optimal cutoff ratio based on sequence statistics.
-        The network learns to adapt the frequency cutoff dynamically for each input.
+        Uses shared cutoff per batch for stability, harder mask, and no epsilon.
         
         Args:
             hidden_states: [batch, seq_len, hidden_dim]
         
         Returns:
-            Filtered hidden states with same shape
+            tuple: (filtered_states, cutoff_ratio) where cutoff_ratio is a scalar for regularization
         """
         fft_result = torch.fft.fft(hidden_states, dim=1)
         
@@ -83,48 +83,44 @@ class LlamaClassificationHead(nn.Module):
         std_mag = magnitude.std(dim=[1, 2])    # [batch] - std of magnitude
         seq_len_norm = hidden_states.size(1) / 512.0  # Normalize by typical max length
         
-        # Predict cutoff ratio for each sample in batch
-        # Stack statistics: [mean_magnitude, std_magnitude, normalized_seq_len]
-        stats = torch.stack([mean_mag, std_mag, torch.full_like(mean_mag, seq_len_norm)], dim=1)  # [batch, 3]
-        # Enforce cutoff in [0, 1]: even if network has sigmoid, add explicit sigmoid for safety
-        # This prevents issues if the network architecture changes later
-        cutoff_ratios = torch.sigmoid(self.fft_adaptive_network(stats)).squeeze(-1)  # [batch] - cutoff ratio in [0, 1]
+        # Use batch-averaged statistics for shared cutoff (more stable than per-sample)
+        batch_mean_mag = mean_mag.mean()
+        batch_std_mag = std_mag.mean()
+        stats = torch.stack([batch_mean_mag, batch_std_mag, torch.tensor(seq_len_norm, device=hidden_states.device)]).unsqueeze(0)  # [1, 3]
         
-        # Create soft differentiable mask.
+        # Predict single cutoff ratio for entire batch
+        cutoff_ratio = torch.sigmoid(self.fft_adaptive_network(stats)).squeeze()  # scalar
+        
+        # Create harder mask with much smaller temperature for sharper cutoff
         batch_size, seq_len = hidden_states.size(0), hidden_states.size(1)
-        # Put tau on the right device/dtype to avoid dtype mixing
-        tau = hidden_states.new_tensor(0.1)  # Temperature: smaller = sharper transition, but still differentiable
+        tau = hidden_states.new_tensor(0.01)  # Much smaller temperature for harder mask (was 0.1)
         
         # Create index tensor: [0, 1, 2, ..., seq_len-1]
         indices = torch.arange(seq_len, device=hidden_states.device, dtype=hidden_states.dtype)
         indices = indices.unsqueeze(0).expand(batch_size, -1)  # [batch, seq_len]
         
-        # Compute cutoff threshold for each sample
-        cutoff_thresholds = cutoff_ratios.unsqueeze(-1) * seq_len  # [batch, 1]
+        # Compute cutoff threshold (shared across batch)
+        cutoff_threshold = cutoff_ratio * seq_len  # scalar
         
-        # Soft mask for positive frequencies: sigmoid((threshold - index) / tau)
-        # When index < threshold: sigmoid(positive) → close to 1
-        # When index > threshold: sigmoid(negative) → close to 0
-        mask_pos = torch.sigmoid((cutoff_thresholds - indices) / tau)  # [batch, seq_len]
+        # Harder mask for positive frequencies: sigmoid((threshold - index) / tau)
+        # With smaller tau, this approaches a hard cutoff while remaining differentiable
+        mask_pos = torch.sigmoid((cutoff_threshold - indices) / tau)  # [batch, seq_len]
         
         # Also handle negative frequencies (symmetric in FFT)
         neg_indices = seq_len - indices - 1  # Reverse indices
-        mask_neg = torch.sigmoid((cutoff_thresholds - neg_indices) / tau)  # [batch, seq_len]
+        mask_neg = torch.sigmoid((cutoff_threshold - neg_indices) / tau)  # [batch, seq_len]
         
         # Combine both masks: keep if either condition is true
-        # Using maximum (or could use: 1 - (1-mask_pos)*(1-mask_neg) for probabilistic OR)
         mask = torch.maximum(mask_pos, mask_neg)  # [batch, seq_len]
         
-        # Ensure at least a tiny amount of signal is kept (prevent complete filtering)
-        # Use tiny epsilon to avoid pathological "all zeros" case without blunting the filter
-        eps = hidden_states.new_tensor(1e-3)
-        mask = mask * (1 - eps) + eps
+        # Removed epsilon - it was interfering with learning
+        # The sigmoid mask already prevents complete filtering naturally
         
         mask = mask.unsqueeze(-1)  # [batch, seq_len, 1]
         fft_filtered = fft_result * mask
         
         filtered_states = torch.fft.ifft(fft_filtered, dim=1)
-        return filtered_states.real
+        return filtered_states.real, cutoff_ratio
     
     def pool_hidden_states(self, hidden_states, attention_mask=None):
         if self.pooling_strategy == "mean":
@@ -166,10 +162,15 @@ class LlamaClassificationHead(nn.Module):
         return pooled
     
     def forward(self, hidden_states, attention_mask=None, labels=None):
+        regularization_loss = None
         if self.use_fft:
             if self.fft_adaptive:
                 # Use learnable adaptive filtering
-                hidden_states = self.apply_adaptive_fft_filter_learnable(hidden_states)
+                hidden_states, cutoff_ratio = self.apply_adaptive_fft_filter_learnable(hidden_states)
+                
+                # Light regularization to keep cutoff near 0.5 (target value)
+                # Small weight (0.01) so it doesn't dominate the main loss
+                regularization_loss = 0.01 * (cutoff_ratio - 0.5) ** 2
             else:
                 # Use fixed 50% cutoff filtering
                 hidden_states = self.apply_fft_filter(hidden_states)
@@ -184,6 +185,9 @@ class LlamaClassificationHead(nn.Module):
         if labels is not None:
             loss_fn = nn.CrossEntropyLoss()
             loss = loss_fn(logits, labels)
+            # Add regularization if adaptive filtering is used
+            if regularization_loss is not None:
+                loss = loss + regularization_loss
         
         return {
             'logits': logits,
