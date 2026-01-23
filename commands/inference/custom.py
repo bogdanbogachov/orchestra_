@@ -142,6 +142,9 @@ def run_infer_custom(
         results: List[Dict[str, Any]] = []
         logger.info(f"Running custom-head inference on dataset: {test_path} ({len(data)} samples)")
         
+        # Track FFT cutoff ratios across all samples
+        fft_cutoff_ratios = []
+        
         # Initialize energy tracker for Green AI metrics
         output_dir = os.path.dirname(output_path)
         energy_tracker = None
@@ -170,6 +173,10 @@ def run_infer_custom(
             latency_ms = (time.time() - start) * 1000.0
             probs = out["probs"].squeeze(0).detach().cpu().tolist()
             pred = int(int(torch.tensor(probs).argmax().item()))
+            
+            # Collect FFT cutoff ratio if available
+            if "fft_cutoff_ratio" in out:
+                fft_cutoff_ratios.append(out["fft_cutoff_ratio"])
             
             # Calculate FLOPs on first sample
             if i == 0:
@@ -254,6 +261,20 @@ def run_infer_custom(
         if total_flops > 0:
             logger.info(f"  Total inference FLOPs: {total_flops:,} (for {len(results)} samples)")
         
+        # Aggregate FFT cutoff ratios
+        fft_metrics = {}
+        if fft_cutoff_ratios:
+            mean_cutoff = sum(fft_cutoff_ratios) / len(fft_cutoff_ratios)
+            fft_metrics = {
+                'mean_cutoff_ratio': mean_cutoff,
+                'min_cutoff_ratio': min(fft_cutoff_ratios),
+                'max_cutoff_ratio': max(fft_cutoff_ratios),
+                'num_samples': len(fft_cutoff_ratios),
+            }
+            logger.info(f"  FFT Cutoff Ratio (aggregated over {len(fft_cutoff_ratios)} samples):")
+            logger.info(f"    Mean: {mean_cutoff:.4f} (keeps {mean_cutoff*100:.1f}% of frequencies)")
+            logger.info(f"    Range: [{fft_metrics['min_cutoff_ratio']:.4f}, {fft_metrics['max_cutoff_ratio']:.4f}]")
+        
         payload = {
             "experiment": experiment_name,
             "head": "custom_head",
@@ -268,6 +289,10 @@ def run_infer_custom(
                 "memory_info": {k: float(v) for k, v in final_memory_info.items()},
             },
         }
+        
+        # Add FFT cutoff metrics to payload
+        if fft_metrics:
+            payload["metrics"]["fft_cutoff_metrics"] = fft_metrics
         
         # Add energy and carbon metrics (Green AI metrics)
         if energy_metrics:

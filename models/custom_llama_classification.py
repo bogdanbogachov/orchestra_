@@ -41,6 +41,7 @@ class LlamaClassificationHead(nn.Module):
     def apply_fft_filter(hidden_states):
         """
         Static FFT filter with fixed 50% cutoff (kept for backward compatibility).
+        Returns: (filtered_states, cutoff_ratio)
         """
         fft_result = torch.fft.fft(hidden_states, dim=1)
 
@@ -61,7 +62,8 @@ class LlamaClassificationHead(nn.Module):
         filtered_states = torch.fft.ifft(fft_filtered, dim=1)
         filtered_states = filtered_states.real
 
-        return filtered_states
+        cutoff_ratio = 0.5  # Fixed for this method
+        return filtered_states, cutoff_ratio
     
     def apply_adaptive_fft_filter_learnable(self, hidden_states):
         """
@@ -200,6 +202,8 @@ class LlamaClassificationHead(nn.Module):
     
     def forward(self, hidden_states, attention_mask=None, labels=None):
         regularization_loss = None
+        fft_cutoff_ratio = None
+        
         if self.use_fft:
             if self.fft_adaptive:
                 # Use learnable adaptive filtering
@@ -208,9 +212,11 @@ class LlamaClassificationHead(nn.Module):
                 # Light regularization to keep cutoff near 0.5 (target value)
                 # Small weight (0.01) so it doesn't dominate the main loss
                 regularization_loss = 0.01 * (cutoff_ratio - 0.5) ** 2
+                fft_cutoff_ratio = cutoff_ratio.item() if isinstance(cutoff_ratio, torch.Tensor) else cutoff_ratio
             else:
                 # Use fixed 50% cutoff filtering
-                hidden_states = self.apply_fft_filter(hidden_states)
+                hidden_states, cutoff_ratio = self.apply_fft_filter(hidden_states)
+                fft_cutoff_ratio = cutoff_ratio
         
         # Custom head style: pool first, then apply linear layer
         pooled = self.pool_hidden_states(hidden_states, attention_mask)
@@ -226,8 +232,14 @@ class LlamaClassificationHead(nn.Module):
             if regularization_loss is not None:
                 loss = loss + regularization_loss
         
-        return {
+        output_dict = {
             'logits': logits,
             'probs': probs,
             'loss': loss
         }
+        
+        # Add FFT cutoff ratio if available
+        if fft_cutoff_ratio is not None:
+            output_dict['fft_cutoff_ratio'] = fft_cutoff_ratio
+        
+        return output_dict
