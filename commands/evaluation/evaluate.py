@@ -113,6 +113,7 @@ def run_evaluation(head: Optional[str] = None):
     inference_memory_info = metrics.get("memory_info", {})
     inference_energy_consumption = metrics.get("energy_consumption", {})
     inference_carbon_footprint = metrics.get("carbon_footprint", {})
+    inference_fft_cutoff_metrics = metrics.get("fft_cutoff_metrics", {})
     
     # Try to load training metrics if available
     training_metrics_path = os.path.join(experiment_dir, chosen_head, "training_metrics.json")
@@ -142,6 +143,10 @@ def run_evaluation(head: Optional[str] = None):
         head_results["inference_metrics"]["energy_consumption"] = inference_energy_consumption
     if inference_carbon_footprint:
         head_results["inference_metrics"]["carbon_footprint"] = inference_carbon_footprint
+    
+    # Add FFT cutoff metrics if available
+    if inference_fft_cutoff_metrics:
+        head_results["inference_metrics"]["fft_cutoff_metrics"] = inference_fft_cutoff_metrics
     
     # Add training metrics if available
     if training_metrics:

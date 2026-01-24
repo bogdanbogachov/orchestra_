@@ -239,6 +239,7 @@ def run_infer_custom(
                     "pred": pred,
                     "probs": probs,
                     "latency_ms": float(latency_ms),
+                    "fft_cutoff_ratio": out.get("fft_cutoff_ratio"),
                 }
             )
             if (i + 1) % 50 == 0:
