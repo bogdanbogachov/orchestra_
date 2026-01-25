@@ -133,7 +133,7 @@ class LlamaClassificationHead(nn.Module):
         # Create mask with larger temperature for better gradient flow
         # Larger tau makes the mask more sensitive to cutoff_ratio changes, enabling learning
         batch_size, seq_len = hidden_states.size(0), hidden_states.size(1)
-        tau = hidden_states.new_tensor(1.0)  # Increased to 1.0 for much better gradient flow
+        tau = hidden_states.new_tensor(5.0)  # Increased to 1.0 for much better gradient flow
         
         # Create index tensor: [0, 1, 2, ..., seq_len-1]
         indices = torch.arange(seq_len, device=hidden_states.device, dtype=hidden_states.dtype)
