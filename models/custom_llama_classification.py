@@ -210,7 +210,7 @@ class LlamaClassificationHead(nn.Module):
                 hidden_states, cutoff_ratio = self.apply_adaptive_fft_filter_learnable(hidden_states)
                 
                 # Light regularization to keep cutoff near 0.5 (target value)
-                regularization_loss = 0.0001 * (cutoff_ratio - 0.5) ** 2
+                regularization_loss = 0.01 * (cutoff_ratio - 0.5) ** 2
                 fft_cutoff_ratio = cutoff_ratio.item() if isinstance(cutoff_ratio, torch.Tensor) else cutoff_ratio
             else:
                 # Use fixed 50% cutoff filtering
