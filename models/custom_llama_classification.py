@@ -113,36 +113,37 @@ class LlamaClassificationHead(nn.Module):
         low_freq_concentration = low_quarter_energy / (total_energy + 1e-8)  # [batch] - higher = more signal-like
         
         seq_len_norm = seq_len / 512.0  # Normalize by typical max length
+        batch_size = hidden_states.size(0)
         
-        # Use batch-averaged statistics for shared cutoff (more stable than per-sample)
-        batch_high_freq_ratio = high_freq_ratio.mean()
-        batch_spectral_flatness = spectral_flatness.mean()
-        batch_low_freq_concentration = low_freq_concentration.mean()
-        
+        # Use per-sample statistics for per-sample cutoff (allows adaptation to individual sample characteristics)
+        # This is important when batch contains mixed noisy/clean samples
         stats = torch.stack([
-            batch_high_freq_ratio,
-            batch_spectral_flatness,
-            batch_low_freq_concentration,
-            torch.tensor(seq_len_norm, device=hidden_states.device, dtype=hidden_states.dtype)
-        ]).unsqueeze(0)  # [1, 4]
+            high_freq_ratio,  # [batch] - per-sample
+            spectral_flatness,  # [batch] - per-sample
+            low_freq_concentration,  # [batch] - per-sample
+            torch.full((batch_size,), seq_len_norm, device=hidden_states.device, dtype=hidden_states.dtype)
+        ], dim=1)  # [batch, 4]
         
-        # Predict single cutoff ratio for entire batch
+        # Predict per-sample cutoff ratio
         # Network already has sigmoid, so don't apply it again
-        cutoff_ratio = self.fft_adaptive_network(stats).squeeze()  # scalar
+        cutoff_ratio = self.fft_adaptive_network(stats).squeeze(-1)  # [batch] - per-sample
         
         # Create mask with larger temperature for better gradient flow
         # Larger tau makes the mask more sensitive to cutoff_ratio changes, enabling learning
-        batch_size, seq_len = hidden_states.size(0), hidden_states.size(1)
-        tau = hidden_states.new_tensor(5.0)  # Increased to 1.0 for much better gradient flow
+        seq_len = hidden_states.size(1)
+        tau = hidden_states.new_tensor(1.0)  # Increased to 1.0 for much better gradient flow
         
         # Create index tensor: [0, 1, 2, ..., seq_len-1]
         indices = torch.arange(seq_len, device=hidden_states.device, dtype=hidden_states.dtype)
         indices = indices.unsqueeze(0).expand(batch_size, -1)  # [batch, seq_len]
         
-        # Compute cutoff threshold (shared across batch)
-        cutoff_threshold = cutoff_ratio * seq_len  # scalar
+        # Compute per-sample cutoff threshold
+        cutoff_threshold = cutoff_ratio * seq_len  # [batch] - per-sample threshold
         
-        # Harder mask for positive frequencies: sigmoid((threshold - index) / tau)
+        # Expand cutoff_threshold to match indices shape for broadcasting
+        cutoff_threshold = cutoff_threshold.unsqueeze(-1)  # [batch, 1]
+        
+        # Mask for positive frequencies: sigmoid((threshold - index) / tau)
         # With smaller tau, this approaches a hard cutoff while remaining differentiable
         mask_pos = torch.sigmoid((cutoff_threshold - indices) / tau)  # [batch, seq_len]
         
@@ -215,7 +216,9 @@ class LlamaClassificationHead(nn.Module):
                     # Store hook handle to avoid memory leaks (will be cleaned up automatically)
                     def gradient_hook(grad):
                         if grad is not None:
-                            grad_norm = grad.abs().item() if grad.numel() == 1 else grad.norm().item()
+                            # For per-sample cutoffs, compute average gradient norm and value
+                            grad_norm = grad.norm().item() if grad.numel() > 1 else grad.abs().item()
+                            avg_cutoff = cutoff_ratio.mean().item() if cutoff_ratio.numel() > 1 else cutoff_ratio.item()
                             # Log gradient info (only occasionally to avoid spam)
                             if not hasattr(self, '_grad_log_counter'):
                                 self._grad_log_counter = 0
@@ -223,21 +226,22 @@ class LlamaClassificationHead(nn.Module):
                             if self._grad_log_counter % 100 == 0:  # Log every 100 calls
                                 try:
                                     from logger_config import logger
-                                    logger.info(f"FFT cutoff_ratio gradient: norm={grad_norm:.6e}, value={cutoff_ratio.item():.4f}")
+                                    logger.info(f"FFT cutoff_ratio gradient: norm={grad_norm:.6e}, avg_value={avg_cutoff:.4f}, range=[{cutoff_ratio.min().item():.4f}, {cutoff_ratio.max().item():.4f}]")
                                 except ImportError:
                                     # Fallback to print if logger not available
-                                    print(f"FFT cutoff_ratio gradient: norm={grad_norm:.6e}, value={cutoff_ratio.item():.4f}")
+                                    print(f"FFT cutoff_ratio gradient: norm={grad_norm:.6e}, avg_value={avg_cutoff:.4f}, range=[{cutoff_ratio.min().item():.4f}, {cutoff_ratio.max().item():.4f}]")
                         else:
                             # Log when gradient is None (no gradient flow)
                             if not hasattr(self, '_grad_log_counter'):
                                 self._grad_log_counter = 0
                             self._grad_log_counter += 1
                             if self._grad_log_counter % 100 == 0:
+                                avg_cutoff = cutoff_ratio.mean().item() if cutoff_ratio.numel() > 1 else cutoff_ratio.item()
                                 try:
                                     from logger_config import logger
-                                    logger.warning(f"FFT cutoff_ratio has NO GRADIENT (grad is None), value={cutoff_ratio.item():.4f}")
+                                    logger.warning(f"FFT cutoff_ratio has NO GRADIENT (grad is None), avg_value={avg_cutoff:.4f}")
                                 except ImportError:
-                                    print(f"WARNING: FFT cutoff_ratio has NO GRADIENT (grad is None), value={cutoff_ratio.item():.4f}")
+                                    print(f"WARNING: FFT cutoff_ratio has NO GRADIENT (grad is None), avg_value={avg_cutoff:.4f}")
                         return grad
                     
                     # Register backward hook
@@ -245,7 +249,8 @@ class LlamaClassificationHead(nn.Module):
                 
                 # No regularization - allow full adaptation based on classification loss
                 regularization_loss = None
-                fft_cutoff_ratio = cutoff_ratio.item() if isinstance(cutoff_ratio, torch.Tensor) else cutoff_ratio
+                # For per-sample cutoffs, store average for logging/return (or could return per-sample)
+                fft_cutoff_ratio = cutoff_ratio.mean().item() if isinstance(cutoff_ratio, torch.Tensor) and cutoff_ratio.numel() > 1 else (cutoff_ratio.item() if isinstance(cutoff_ratio, torch.Tensor) else cutoff_ratio)
             else:
                 # Use fixed 50% cutoff filtering
                 hidden_states, cutoff_ratio = self.apply_fft_filter(hidden_states)
