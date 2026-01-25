@@ -36,6 +36,7 @@ def run_finetune():
     training_config = CONFIG['training']
     data_config = CONFIG['data_processing']
     paths_config = CONFIG['paths']
+    model_config = CONFIG['model']
     experiment_name = CONFIG.get('experiment', 'orchestra')
     experiments_dir = paths_config['experiments']
     
@@ -296,6 +297,97 @@ def run_finetune():
         
         trainer._load_best_model = custom_load_best_model
         logger.info("✓ Overrode Trainer load_best_model method for custom head models")
+
+    # Override optimizer creation to use separate learning rate for FFT adaptive network
+    if use_custom_head and model_config.get('use_fft') and model_config.get('fft_adaptive'):
+        from torch.optim import AdamW
+        
+        base_lr = training_config['learning_rate']
+        fft_lr_multiplier = model_config.get('fft_learning_rate_multiplier', 10.0)
+        fft_lr = base_lr * fft_lr_multiplier
+        
+        def create_optimizer_with_fft_lr():
+            """Create optimizer with separate learning rate for FFT adaptive network."""
+            # First, get decay parameters (for weight decay)
+            decay_parameters = trainer.get_decay_parameter_names(trainer.model_wrapped if hasattr(trainer, 'model_wrapped') else trainer.model)
+            
+            # Separate parameters into groups
+            fft_params_decay = []
+            fft_params_no_decay = []
+            other_params_decay = []
+            other_params_no_decay = []
+            
+            for name, param in trainer.model.named_parameters():
+                if not param.requires_grad:
+                    continue
+                    
+                if 'fft_adaptive_network' in name:
+                    if name in decay_parameters:
+                        fft_params_decay.append(param)
+                    else:
+                        fft_params_no_decay.append(param)
+                else:
+                    if name in decay_parameters:
+                        other_params_decay.append(param)
+                    else:
+                        other_params_no_decay.append(param)
+            
+            # Create parameter groups with different learning rates
+            param_groups = []
+            
+            # Get weight decay value safely
+            weight_decay = getattr(training_args, 'weight_decay', 0.0)
+            
+            # FFT parameters with weight decay
+            if fft_params_decay:
+                param_groups.append({
+                    "params": fft_params_decay,
+                    "lr": fft_lr,
+                    "weight_decay": weight_decay,
+                })
+            
+            # FFT parameters without weight decay
+            if fft_params_no_decay:
+                param_groups.append({
+                    "params": fft_params_no_decay,
+                    "lr": fft_lr,
+                    "weight_decay": 0.0,
+                })
+            
+            # Other parameters with weight decay
+            if other_params_decay:
+                param_groups.append({
+                    "params": other_params_decay,
+                    "lr": base_lr,
+                    "weight_decay": weight_decay,
+                })
+            
+            # Other parameters without weight decay
+            if other_params_no_decay:
+                param_groups.append({
+                    "params": other_params_no_decay,
+                    "lr": base_lr,
+                    "weight_decay": 0.0,
+                })
+            
+            # Create optimizer with custom parameter groups
+            optimizer = AdamW(
+                param_groups,
+                betas=(training_args.adam_beta1, training_args.adam_beta2),
+                eps=training_args.adam_epsilon,
+            )
+            
+            trainer.optimizer = optimizer
+            logger.info(f"✓ Created optimizer with separate learning rates:")
+            logger.info(f"  Base LR: {base_lr:.6f} (for all other parameters)")
+            logger.info(f"  FFT LR: {fft_lr:.6f} (for FFT adaptive network, {fft_lr_multiplier}x multiplier)")
+            logger.info(f"  FFT parameters: {len(fft_params_decay) + len(fft_params_no_decay)}")
+            logger.info(f"  Other parameters: {len(other_params_decay) + len(other_params_no_decay)}")
+            
+            return optimizer
+        
+        trainer.create_optimizer = create_optimizer_with_fft_lr
+        logger.info("✓ Overrode optimizer creation to use separate FFT learning rate")
 
     # Precompute FLOPs once from first train batch (reliable)
     try:
