@@ -8,7 +8,7 @@ model:
   pooling_strategy: "mean"
   use_fft: true
   fft_adaptive: true  # true for learnable adaptive filtering, false for fixed 50% cutoff
-  fft_learning_rate_multiplier: 1000.0  # FFT network will use this multiplier times the base learning rate
+  fft_learning_rate_multiplier: 10.0  # FFT network will use this multiplier times the base learning rate
 
   num_labels: 77
   pad_token: "<|reserved_special_token_15|>"

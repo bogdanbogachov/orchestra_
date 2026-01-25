@@ -130,9 +130,10 @@ class LlamaClassificationHead(nn.Module):
         # Network already has sigmoid, so don't apply it again
         cutoff_ratio = self.fft_adaptive_network(stats).squeeze()  # scalar
         
-        # Create harder mask with much smaller temperature for sharper cutoff
+        # Create mask with larger temperature for better gradient flow
+        # Larger tau makes the mask more sensitive to cutoff_ratio changes, enabling learning
         batch_size, seq_len = hidden_states.size(0), hidden_states.size(1)
-        tau = hidden_states.new_tensor(0.01)  # Much smaller temperature for harder mask (was 0.1)
+        tau = hidden_states.new_tensor(0.1)  # Increased from 0.01 to 0.1 for better gradient flow
         
         # Create index tensor: [0, 1, 2, ..., seq_len-1]
         indices = torch.arange(seq_len, device=hidden_states.device, dtype=hidden_states.dtype)
@@ -209,8 +210,41 @@ class LlamaClassificationHead(nn.Module):
                 # Use learnable adaptive filtering
                 hidden_states, cutoff_ratio = self.apply_adaptive_fft_filter_learnable(hidden_states)
                 
-                # Light regularization to keep cutoff near 0.5 (target value)
-                regularization_loss = 0.01 * (cutoff_ratio - 0.5) ** 2
+                # Gradient checking: register hook to monitor gradient flow
+                if isinstance(cutoff_ratio, torch.Tensor) and cutoff_ratio.requires_grad:
+                    # Store hook handle to avoid memory leaks (will be cleaned up automatically)
+                    def gradient_hook(grad):
+                        if grad is not None:
+                            grad_norm = grad.abs().item() if grad.numel() == 1 else grad.norm().item()
+                            # Log gradient info (only occasionally to avoid spam)
+                            if not hasattr(self, '_grad_log_counter'):
+                                self._grad_log_counter = 0
+                            self._grad_log_counter += 1
+                            if self._grad_log_counter % 100 == 0:  # Log every 100 calls
+                                try:
+                                    from logger_config import logger
+                                    logger.info(f"FFT cutoff_ratio gradient: norm={grad_norm:.6e}, value={cutoff_ratio.item():.4f}")
+                                except ImportError:
+                                    # Fallback to print if logger not available
+                                    print(f"FFT cutoff_ratio gradient: norm={grad_norm:.6e}, value={cutoff_ratio.item():.4f}")
+                        else:
+                            # Log when gradient is None (no gradient flow)
+                            if not hasattr(self, '_grad_log_counter'):
+                                self._grad_log_counter = 0
+                            self._grad_log_counter += 1
+                            if self._grad_log_counter % 100 == 0:
+                                try:
+                                    from logger_config import logger
+                                    logger.warning(f"FFT cutoff_ratio has NO GRADIENT (grad is None), value={cutoff_ratio.item():.4f}")
+                                except ImportError:
+                                    print(f"WARNING: FFT cutoff_ratio has NO GRADIENT (grad is None), value={cutoff_ratio.item():.4f}")
+                        return grad
+                    
+                    # Register backward hook
+                    cutoff_ratio.register_hook(gradient_hook)
+                
+                # No regularization - allow full adaptation based on classification loss
+                regularization_loss = None
                 fft_cutoff_ratio = cutoff_ratio.item() if isinstance(cutoff_ratio, torch.Tensor) else cutoff_ratio
             else:
                 # Use fixed 50% cutoff filtering
