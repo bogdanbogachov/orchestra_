@@ -210,6 +210,14 @@ class LlamaClassificationHead(nn.Module):
                 # Use learnable adaptive filtering
                 hidden_states, cutoff_ratio = self.apply_adaptive_fft_filter_learnable(hidden_states)
                 
+                # Store cutoff_ratio stats for logging in backward hook (for correlation with gradient norms)
+                # Store as scalars to avoid unnecessary memory allocations
+                if isinstance(cutoff_ratio, torch.Tensor):
+                    cr = cutoff_ratio.detach()
+                    self._last_cutoff_stats = (cr.mean().item(), cr.min().item(), cr.max().item())
+                else:
+                    self._last_cutoff_stats = cutoff_ratio
+                
                 # Gradient checking: register hook to monitor gradient flow
                 if isinstance(cutoff_ratio, torch.Tensor) and cutoff_ratio.requires_grad:
                     # Store hook handle to avoid memory leaks (will be cleaned up automatically)
@@ -245,6 +253,70 @@ class LlamaClassificationHead(nn.Module):
                     
                     # Register backward hook
                     cutoff_ratio.register_hook(gradient_hook)
+                
+                # Register hooks on FFT adaptive network to log gradient norms
+                # Robust approach: accumulate on all params except last, last param accumulates + logs/resets
+                # This avoids relying on hook execution order across parameters
+                if not hasattr(self, '_fft_hooks_registered'):
+                    self._fft_hooks_registered = True
+                    self._fft_grad_log_counter = 0
+                    self._fft_grad_sq_sum = 0.0
+                    
+                    # Get all trainable parameters
+                    params = [p for p in self.fft_adaptive_network.parameters() if p.requires_grad]
+                    last_param = params[-1] if params else None
+                    
+                    # Accumulation hook for all params except last
+                    def accumulation_hook(grad):
+                        if grad is None:
+                            return grad
+                        self._fft_grad_sq_sum += float(grad.detach().pow(2).sum().item())
+                        return grad
+                    
+                    # Register accumulation hooks on all params except last
+                    for p in params[:-1]:
+                        p.register_hook(accumulation_hook)
+                    
+                    # Register combined hook on last param: accumulates + logs/resets
+                    # This ensures last param is counted exactly once, and logging happens
+                    # after at least the last param's gradient is accumulated
+                    if last_param is not None:
+                        self._fft_last_param = last_param
+                        
+                        def last_hook(grad):
+                            # First, accumulate this param's gradient (if present)
+                            if grad is not None:
+                                self._fft_grad_sq_sum += float(grad.detach().pow(2).sum().item())
+                            
+                            # Then log and reset
+                            if not hasattr(self, '_fft_grad_log_counter'):
+                                self._fft_grad_log_counter = 0
+                            self._fft_grad_log_counter += 1
+                            
+                            if self._fft_grad_log_counter % 100 == 0:
+                                # Compute global L2 norm from accumulated squared gradients
+                                gn = (self._fft_grad_sq_sum ** 0.5) if self._fft_grad_sq_sum > 0 else 0.0
+                                
+                                # Get cutoff_ratio stats for correlation with gradient norms
+                                cutoff_stats = ""
+                                if hasattr(self, '_last_cutoff_stats'):
+                                    if isinstance(self._last_cutoff_stats, tuple):
+                                        cutoff_mean, cutoff_min, cutoff_max = self._last_cutoff_stats
+                                        cutoff_stats = f", cutoff_ratio: mean={cutoff_mean:.4f}, min={cutoff_min:.4f}, max={cutoff_max:.4f}"
+                                    else:
+                                        cutoff_stats = f", cutoff_ratio: {self._last_cutoff_stats:.4f}"
+                                
+                                try:
+                                    from logger_config import logger
+                                    logger.info(f"fft_adaptive_network global grad L2: {gn:.3e}{cutoff_stats}")
+                                except ImportError:
+                                    print(f"fft_adaptive_network global grad L2: {gn:.3e}{cutoff_stats}")
+                            
+                            # Reset accumulated sum for next backward step
+                            self._fft_grad_sq_sum = 0.0
+                            return grad
+                        
+                        last_param.register_hook(last_hook)
                 
                 # No regularization - allow full adaptation based on classification loss
                 regularization_loss = None

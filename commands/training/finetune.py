@@ -367,6 +367,16 @@ def run_finetune():
             )
             
             trainer.optimizer = optimizer
+            
+            # Verify FFT parameters are in the optimizer
+            opt_params = {id(p) for g in optimizer.param_groups for p in g["params"]}
+            missing = [n for n, p in trainer.model.named_parameters()
+                      if "fft_adaptive_network" in n and id(p) not in opt_params]
+            if missing:
+                logger.warning(f"Missing FFT params in optimizer: {missing}")
+            else:
+                logger.info(f"✓ Verified all FFT parameters are in optimizer")
+            
             logger.info(f"✓ Created optimizer with separate learning rates:")
             logger.info(f"  Base LR: {base_lr:.6f} (for all other parameters)")
             logger.info(f"  FFT LR: {fft_lr:.6f} (for FFT adaptive network, {fft_lr_multiplier}x multiplier)")
