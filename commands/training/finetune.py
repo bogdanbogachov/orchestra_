@@ -312,8 +312,7 @@ def run_finetune():
             decay_parameters = trainer.get_decay_parameter_names(trainer.model_wrapped if hasattr(trainer, 'model_wrapped') else trainer.model)
             
             # Separate parameters into groups
-            fft_params_decay = []
-            fft_params_no_decay = []
+            fft_params = []  # All FFT parameters (always weight_decay=0)
             other_params_decay = []
             other_params_no_decay = []
             
@@ -322,10 +321,8 @@ def run_finetune():
                     continue
                     
                 if 'fft_adaptive_network' in name:
-                    if name in decay_parameters:
-                        fft_params_decay.append(param)
-                    else:
-                        fft_params_no_decay.append(param)
+                    # All FFT parameters go into one group with weight_decay=0
+                    fft_params.append(param)
                 else:
                     if name in decay_parameters:
                         other_params_decay.append(param)
@@ -338,20 +335,12 @@ def run_finetune():
             # Get weight decay value safely
             weight_decay = getattr(training_args, 'weight_decay', 0.0)
             
-            # FFT parameters with weight decay
-            if fft_params_decay:
+            # FFT parameters - ALWAYS exclude from weight decay (prevents pinning to 0.5)
+            if fft_params:
                 param_groups.append({
-                    "params": fft_params_decay,
+                    "params": fft_params,
                     "lr": fft_lr,
-                    "weight_decay": weight_decay,
-                })
-            
-            # FFT parameters without weight decay
-            if fft_params_no_decay:
-                param_groups.append({
-                    "params": fft_params_no_decay,
-                    "lr": fft_lr,
-                    "weight_decay": 0.0,
+                    "weight_decay": 0.0,  # Always 0.0 for FFT adaptive network
                 })
             
             # Other parameters with weight decay
@@ -381,7 +370,7 @@ def run_finetune():
             logger.info(f"✓ Created optimizer with separate learning rates:")
             logger.info(f"  Base LR: {base_lr:.6f} (for all other parameters)")
             logger.info(f"  FFT LR: {fft_lr:.6f} (for FFT adaptive network, {fft_lr_multiplier}x multiplier)")
-            logger.info(f"  FFT parameters: {len(fft_params_decay) + len(fft_params_no_decay)}")
+            logger.info(f"  FFT parameters: {len(fft_params)} (weight_decay=0.0)")
             logger.info(f"  Other parameters: {len(other_params_decay) + len(other_params_no_decay)}")
             
             return optimizer
