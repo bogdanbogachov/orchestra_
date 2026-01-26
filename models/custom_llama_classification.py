@@ -28,14 +28,13 @@ class LlamaClassificationHead(nn.Module):
                 nn.Linear(16, 1),
                 nn.Sigmoid()  # Output: cutoff ratio [0, 1]
             )
-            # Initialize to output ~0.5 (similar to fixed filtering)
-            # This gives a reasonable starting point instead of random initialization
+            # Use standard initialization without bias toward 0.5
+            # This allows the network to learn to adapt from the start
             with torch.no_grad():
-                # Set bias of final linear layer so sigmoid outputs ~0.5 initially
-                # sigmoid(0) ≈ 0.5, so we want the input to sigmoid to be ~0
-                self.fft_adaptive_network[-2].bias.data.fill_(0.0)
-                # Initialize weights to be small so output is close to 0.5
-                self.fft_adaptive_network[-2].weight.data.normal_(0.0, 0.01)
+                # Initialize bias with random values (not fixed to 0.0)
+                self.fft_adaptive_network[-2].bias.data.normal_(0.0, 0.1)
+                # Initialize weights with larger variance to allow variation
+                self.fft_adaptive_network[-2].weight.data.normal_(0.0, 0.1)
 
     @staticmethod
     def apply_fft_filter(hidden_states):
