@@ -253,12 +253,12 @@ def add_realistic_noise(text: str, is_train: bool, max_extra_ratio: float = 0.45
     return noisy
 
 # ---------------------------------------------------------------------
-# Main runner (same behavior: every second example)
+# Main runner (adds noise to every example)
 # ---------------------------------------------------------------------
 
 def run_add_noise():
     """
-    Add realistic, meaningful noise to every second question in train/test.
+    Add realistic, meaningful noise to every question in train/test.
     Train and test use different noise styles (distribution shift).
     """
     paths_config = CONFIG["paths"]
@@ -273,7 +273,7 @@ def run_add_noise():
     logger.info(f"Loaded {train_count} training examples")
 
     train_modified = 0
-    for i in range(1, len(train_data), 2):
+    for i in range(len(train_data)):
         original_text = train_data[i]["text"]
         train_data[i]["text"] = add_realistic_noise(original_text, is_train=True)
         train_modified += 1
@@ -295,7 +295,7 @@ def run_add_noise():
     logger.info(f"Loaded {test_count} test examples")
 
     test_modified = 0
-    for i in range(1, len(test_data), 2):
+    for i in range(len(test_data)):
         original_text = test_data[i]["text"]
         test_data[i]["text"] = add_realistic_noise(original_text, is_train=False)
         test_modified += 1
@@ -311,7 +311,7 @@ def run_add_noise():
 
     logger.info(f"\n{'=' * 100}")
     logger.info("✓ Realistic noise augmentation complete!")
-    logger.info(f"✓ Training set: {train_modified}/{train_count} modified (every second question)")
-    logger.info(f"✓ Test set: {test_modified}/{test_count} modified (every second question)")
+    logger.info(f"✓ Training set: {train_modified}/{train_count} modified (every question)")
+    logger.info(f"✓ Test set: {test_modified}/{test_count} modified (every question)")
     logger.info("✓ Noise is meaningful (context/justification/self-correction), not word-interleaving")
     logger.info("✓ Test noise style differs from train noise style (distribution shift)")
