@@ -56,7 +56,17 @@ def run_finetune():
         experiment_base_dir = os.path.join(experiments_dir, experiment_name)
     
     # Use random seed if specified, otherwise use None for non-deterministic training
-    seed = training_config.get('seed', None)
+    # Check environment variable first, then config file
+    seed = os.getenv('SEED')
+    if seed is not None:
+        try:
+            seed = int(seed)
+        except ValueError:
+            logger.warning(f"Invalid SEED environment variable: {seed}. Using config value.")
+            seed = training_config.get('seed', None)
+    else:
+        seed = training_config.get('seed', None)
+    
     if seed is not None:
         set_seed(seed)
         logger.info(f"✓ Set random seed to {seed} for reproducible training")
