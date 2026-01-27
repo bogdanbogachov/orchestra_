@@ -43,8 +43,8 @@ add_experiments() {
 #add_experiments "banking77_noise_custom_last" "custom_head" "True" "last" "False" "False" "True" 53 1 10
 #add_experiments "banking77_noise_custom_max" "custom_head" "True" "max" "False" "False" "True" 53 1 10
 #add_experiments "banking77_noise_custom_mean" "custom_head" "True" "mean" "False" "False" "True" 53 1 10
-add_experiments "banking77_noise_custom_attention" "custom_head" "True" "attention" "False" "False" "True" 53 1 3
+add_experiments "banking77_noise_custom_attention" "custom_head" "True" "attention" "False" "False" "True" 54 1 3
 #add_experiments "banking77_noise_fft50_custom_fft_last" "custom_head" "True" "last" "True" "False" "True" 53 1 10
 #add_experiments "banking77_noise_fft50_custom_fft_max" "custom_head" "True" "max" "True" "False" "True" 53 1 10
 #add_experiments "banking77_noise_fft50_custom_fft_mean" "custom_head" "True" "mean" "True" "False" "True" 53 1 10
-add_experiments "banking77_noise_fft50_custom_fft_attention" "custom_head" "True" "attention" "True" "False" "True" 53 1 3
+add_experiments "banking77_noise_fft50_custom_fft_attention" "custom_head" "True" "attention" "True" "False" "True" 54 1 3
