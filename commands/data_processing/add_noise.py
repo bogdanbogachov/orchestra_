@@ -1,6 +1,7 @@
 import json
 import random
 import re
+from math import ceil
 from config import CONFIG
 from logger_config import logger
 
@@ -42,6 +43,20 @@ NOISE_TEMPLATES_TRAIN = {
     "soft_urgency": [
         "it's kind of urgent", "ASAP if possible", "today if you can"
     ],
+    "meta": [
+        "I'm sorry if I'm missing something obvious",
+        "I might be misunderstanding the flow",
+        "I just want to make sure I'm doing this correctly",
+        "if there's a standard procedure, I'm happy to follow it",
+        "I'm trying not to make any mistakes here",
+    ],
+    "diagnostics": [
+        "I already tried logging out and back in",
+        "I restarted the app and retried",
+        "I cleared cache and tried again",
+        "I attempted it from another browser",
+        "I double-checked the details before submitting",
+    ],
 }
 
 # Test noise: different style (more formal / cautious / interrogative)
@@ -80,9 +95,22 @@ NOISE_TEMPLATES_TEST = {
     "soft_urgency": [
         "this is time-sensitive", "at your earliest convenience", "as soon as possible"
     ],
+    "meta": [
+        "I would appreciate confirmation of the correct process",
+        "I would like to ensure I am following the proper steps",
+        "I am seeking clarification to avoid any incorrect action",
+        "I would appreciate any guidance you can provide",
+        "I would prefer to resolve this in the standard way",
+    ],
+    "diagnostics": [
+        "I have attempted the action multiple times",
+        "I have reinstalled the application and retried",
+        "I have tried both desktop and mobile",
+        "I have verified the information prior to submission",
+        "I have confirmed that my connection is stable",
+    ],
 }
 
-# Typos: keep them mild and mostly on *noise*, not on the original user text
 TYPO_PATTERNS = {
     "i": ["i", "I", "1"],
     "e": ["e", "E", "3"],
@@ -113,131 +141,68 @@ def choose_templates(is_train: bool):
     return NOISE_TEMPLATES_TRAIN if is_train else NOISE_TEMPLATES_TEST
 
 
-def apply_typos(text: str, typo_probability: float = 0.05) -> str:
-    """
-    Mild, realistic typos.
-    Apply ONLY to noise fragments for realism without corrupting intent.
-    """
+def apply_typos(text: str, typo_probability: float = 0.015) -> str:
     out = []
     for ch in text:
         cl = ch.lower()
         if cl in TYPO_PATTERNS and random.random() < typo_probability:
             r = random.random()
             if r < 0.15:
-                continue  # deletion
+                continue
             elif r < 0.30:
                 out.append(ch)
-                out.append(ch)  # duplication
+                out.append(ch)
             else:
-                out.append(random.choice(TYPO_PATTERNS[cl]))  # substitution
+                out.append(random.choice(TYPO_PATTERNS[cl]))
         else:
             out.append(ch)
     return "".join(out)
 
 
-def _pick_unique(T: dict, key: str, used_keys: set) -> str | None:
-    """Pick from a bucket at most once per example (prevents repetition creep)."""
-    if key in used_keys:
-        return None
-    used_keys.add(key)
-    return random.choice(T[key])
-
-
-# ------------------------------ strategies ------------------------------
-
-
-def add_prefix(original: str, T: dict, used_keys: set) -> str | None:
-    opener = _pick_unique(T, "openers", used_keys)
-    if not opener:
-        return None
-    prefix = opener
-    if not prefix.endswith((",", "—")):
-        prefix = prefix + ","
-    return f"{prefix} {original}"
-
-
-def add_suffix(original: str, T: dict, used_keys: set) -> str | None:
-    # Prefer followup (more natural) but avoid repeating categories
-    tail = _pick_unique(T, "followups", used_keys)
-    if not tail:
-        tail = _pick_unique(T, "closers", used_keys)
-    if not tail:
-        return None
-    tail = safe_append_punct(tail, ".")
-    return f"{safe_append_punct(original, '.')} {tail}"
-
-
-def add_context_clause(original: str, T: dict, used_keys: set) -> str | None:
-    ctx = _pick_unique(T, "context", used_keys)
-    if not ctx:
-        return None
-    if random.random() < 0.5:
-        return f"{ctx} — {original}"
-    ctx = safe_append_punct(ctx, ".")
-    return f"{safe_append_punct(original, '.')} {ctx}"
-
-
-def add_justification(original: str, T: dict, used_keys: set) -> str | None:
-    j = _pick_unique(T, "justifications", used_keys)
-    if not j:
-        return None
-    return f"{safe_append_punct(original, '.')} {j}."
-
-
-def add_self_correction(original: str, T: dict, used_keys: set) -> str | None:
+def _rand_sentence(T: dict) -> str:
     """
-    Insert a self-correction once (not word-by-word).
-    Example: "How do I reset my password — I mean, my online banking PIN?"
+    A natural 'ticket-like' sentence that adds bulk without changing intent.
     """
-    marker = _pick_unique(T, "self_corrections", used_keys)
-    if not marker:
-        return None
-
-    words = original.split()
-    if len(words) < 6:
-        return None
-
-    insert_at = random.randint(2, min(6, len(words) - 2))
-    span_len = random.randint(2, 3)
-    span = " ".join(words[insert_at: insert_at + span_len])
-
-    new_words = words[:insert_at] + [marker] + [span] + words[insert_at:]
-    return normalize_spaces(" ".join(new_words))
-
-
-def add_soft_urgency(original: str, T: dict, used_keys: set) -> str | None:
-    u = _pick_unique(T, "soft_urgency", used_keys)
-    if not u:
-        return None
-    if random.random() < 0.5:
-        return f"{u} — {original}"
-    return f"{safe_append_punct(original, '.')} ({u})."
-
-
-STRATEGIES = [
-    add_prefix,
-    add_suffix,
-    add_context_clause,
-    add_justification,
-    add_self_correction,
-    add_soft_urgency,
-]
+    parts = []
+    if random.random() < 0.35:
+        parts.append(random.choice(T["openers"]))
+    if random.random() < 0.85:
+        parts.append(random.choice(T["context"]))
+    if random.random() < 0.70:
+        parts.append(random.choice(T["diagnostics"]))
+    if random.random() < 0.70:
+        parts.append(random.choice(T["meta"]))
+    if random.random() < 0.70:
+        parts.append(random.choice(T["justifications"]))
+    if random.random() < 0.60:
+        parts.append(random.choice(T["soft_urgency"]))
+    if random.random() < 0.70:
+        parts.append(random.choice(T["followups"]))
+    else:
+        parts.append(random.choice(T["closers"]))
+    # Turn fragments into 1–2 sentences
+    s = " ".join(parts)
+    s = normalize_spaces(s)
+    s = safe_append_punct(s, ".")
+    if random.random() < 0.45:
+        s2 = normalize_spaces(random.choice(T["meta"]) + ". " + random.choice(T["followups"]))
+        s2 = safe_append_punct(s2, ".")
+        return f"{s} {s2}"
+    return s
 
 
 def add_realistic_noise(
     text: str,
     is_train: bool,
-    target_extra_ratio: float = 0.70,
-    max_ops: int = 4,
-    hard_cap_total_ratio: float = 2.0,
+    target_noise_fraction: float = 0.80,  # <-- what you asked for
+    min_orig_tokens_for_strict: int = 6,
+    max_total_multiplier: float = 6.0,     # safety
 ) -> str:
     """
-    Make added noise ~ target_extra_ratio of original length (by token count).
-      extra_ratio = (len(noisy_tokens) - len(orig_tokens)) / len(orig_tokens)
+    Enforces: noise_tokens / total_tokens ~= target_noise_fraction
+      total_tokens ~= orig_tokens / (1 - target_noise_fraction)
 
-    Notes:
-    - For short texts, we automatically reduce the target to keep output natural.
-    - Prevents repetition by using each template bucket at most once per example.
+    We do this by appending natural ticket-like sentences until we hit target length.
     """
     if not text or not text.strip():
         return text
@@ -247,67 +212,29 @@ def add_realistic_noise(
     orig_tokens = original.split()
     orig_len = len(orig_tokens)
 
-    # Keep short queries natural (70% noise on 3–5 tokens looks fake)
-    if orig_len < 6:
-        target_extra_ratio = min(target_extra_ratio, 0.40)
-    elif orig_len < 10:
-        target_extra_ratio = min(target_extra_ratio, 0.55)
+    # For very short queries, strict 80% looks absurd; still heavy, but a bit lower.
+    if orig_len < min_orig_tokens_for_strict:
+        target_noise_fraction = min(target_noise_fraction, 0.65)
 
-    used_keys: set = set()
-    noisy = original
+    # Desired total length so that original is ~ (1 - f) of final
+    desired_total_len = ceil(orig_len / max(1e-6, (1.0 - target_noise_fraction)))
+    hard_cap_len = int(orig_len * max_total_multiplier)
 
-    # Ratio-based loop: keep applying non-repeating, meaning-preserving transforms
-    ops_used = 0
-    while ops_used < max_ops:
-        cur_len = len(noisy.split())
-        extra_ratio = (cur_len - orig_len) / max(1, orig_len)
-        if extra_ratio >= target_extra_ratio:
-            break
+    # Start with the original preserved as-is, then add noise after it.
+    noisy = safe_append_punct(original, ".")
+    while len(noisy.split()) < desired_total_len and len(noisy.split()) < hard_cap_len:
+        noisy = normalize_spaces(f"{noisy} {_rand_sentence(T)}")
 
-        # Choose a strategy that can still add something new (non-repeated bucket)
-        random.shuffle(STRATEGIES)
-        applied = False
-        for op in STRATEGIES:
-            candidate = op(noisy, T, used_keys)
-            if not candidate:
-                continue
-
-            candidate = normalize_spaces(candidate)
-            cand_len = len(candidate.split())
-
-            # Accept only if it actually increases length a bit
-            if cand_len > cur_len:
-                noisy = candidate
-                ops_used += 1
-                applied = True
-                break
-
-        if not applied:
-            break  # nothing left to add without repetition
-
-        # Hard cap total growth (safety)
-        if len(noisy.split()) > int(orig_len * hard_cap_total_ratio):
-            break
-
-        # Extra safeguard: if we're already close, don't keep stacking clauses
-        if ((len(noisy.split()) - orig_len) / max(1, orig_len)) > (target_extra_ratio + 0.10):
-            break
-
-    # Mild typos very rarely (low rate to keep outputs natural)
-    if random.random() < (0.15 if is_train else 0.08):
-        noisy = apply_typos(noisy, typo_probability=0.015)
+    # Very light typos rarely (keeps it readable)
+    if random.random() < (0.12 if is_train else 0.06):
+        noisy = apply_typos(noisy, typo_probability=0.012)
 
     return noisy
 
 
-# ---------------------------------------------------------------------
-# Main runner (adds noise to every example)
-# ---------------------------------------------------------------------
-
 def run_add_noise():
     """
-    Add realistic, meaningful noise to every question in train/test.
-    Train and test use different noise styles (distribution shift).
+    Add heavy realistic noise to every question in train/test.
     """
     paths_config = CONFIG["paths"]
     train_file = paths_config["data"]["train"]
@@ -317,16 +244,13 @@ def run_add_noise():
     with open(train_file, "r", encoding="utf-8") as f:
         train_data = json.load(f)
 
-    train_count = len(train_data)
-    logger.info(f"Loaded {train_count} training examples")
+    logger.info(f"Loaded {len(train_data)} training examples")
 
-    for i in range(train_count):
-        original_text = train_data[i]["text"]
+    for i in range(len(train_data)):
         train_data[i]["text"] = add_realistic_noise(
-            original_text,
+            train_data[i]["text"],
             is_train=True,
-            target_extra_ratio=0.70,
-            max_ops=4,
+            target_noise_fraction=0.80,
         )
         if (i + 1) % 1000 == 0:
             logger.info(f"Processed {i + 1} training examples...")
@@ -335,22 +259,17 @@ def run_add_noise():
     with open(train_file, "w", encoding="utf-8") as f:
         json.dump(train_data, f, indent=2, ensure_ascii=False)
 
-    logger.info(f"✓ Added realistic noise to {train_count} / {train_count} training examples")
-
     logger.info(f"\nLoading test data from {test_file}")
     with open(test_file, "r", encoding="utf-8") as f:
         test_data = json.load(f)
 
-    test_count = len(test_data)
-    logger.info(f"Loaded {test_count} test examples")
+    logger.info(f"Loaded {len(test_data)} test examples")
 
-    for i in range(test_count):
-        original_text = test_data[i]["text"]
+    for i in range(len(test_data)):
         test_data[i]["text"] = add_realistic_noise(
-            original_text,
+            test_data[i]["text"],
             is_train=False,
-            target_extra_ratio=0.70,
-            max_ops=4,
+            target_noise_fraction=0.80,
         )
         if (i + 1) % 1000 == 0:
             logger.info(f"Processed {i + 1} test examples...")
@@ -359,12 +278,7 @@ def run_add_noise():
     with open(test_file, "w", encoding="utf-8") as f:
         json.dump(test_data, f, indent=2, ensure_ascii=False)
 
-    logger.info(f"✓ Added realistic noise to {test_count} / {test_count} test examples")
-
     logger.info(f"\n{'=' * 100}")
-    logger.info("✓ Realistic noise augmentation complete!")
-    logger.info(f"✓ Training set: {train_count}/{train_count} modified (every question)")
-    logger.info(f"✓ Test set: {test_count}/{test_count} modified (every question)")
-    logger.info("✓ Noise is meaningful (context/justification/self-correction), not word-interleaving")
-    logger.info("✓ Target noise level uses token-ratio control (~70% extra tokens per sentence)")
-    logger.info("✓ Test noise style differs from train noise style (distribution shift)")
+    logger.info("✓ Heavy realistic noise augmentation complete!")
+    logger.info("✓ Noise occupies ~80% of final text (by token fraction).")
+    logger.info("✓ Original intent is preserved as the first sentence.")
