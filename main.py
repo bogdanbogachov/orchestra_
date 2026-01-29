@@ -25,7 +25,7 @@ if __name__ == '__main__':
         logger.info("=" * 100)
         logger.info("STEP: ADD NOISE")
         logger.info("=" * 100)
-        run_add_noise()
+        run_add_noise(noise_type=args.noise_type)
     
     if args.finetune:
         logger.info("=" * 100)

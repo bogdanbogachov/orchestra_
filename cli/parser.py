@@ -7,6 +7,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     parser.add_argument("--preprocess_data", type=str_to_bool, default=False)
     parser.add_argument("--add_noise", type=str_to_bool, default=False)
+    parser.add_argument("--noise_type", type=str, required=True, choices=["banking77", "clinc150"],
+                        help="Type of noise to use: 'banking77' or 'clinc150' (required when using --add_noise)")
     parser.add_argument("--finetune", type=str_to_bool, default=False)
     parser.add_argument("--infer_default", type=str_to_bool, default=False)
     parser.add_argument("--infer_custom", type=str_to_bool, default=False)

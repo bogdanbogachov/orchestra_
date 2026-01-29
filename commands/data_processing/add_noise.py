@@ -1,26 +1,27 @@
 import json
 import random
 import re
-from math import ceil
+from typing import Dict, List, Tuple
 from config import CONFIG
 from logger_config import logger
 
+# ----------------------------
+# Noise templates
+# ----------------------------
 
-# Train noise: casual + chatty
-NOISE_TEMPLATES_TRAIN = {
+# Banking77-ish (domain flavored)
+NOISE_TEMPLATES_BANKING_TRAIN = {
     "openers": [
         "Hi", "Hey", "Hello", "Quick question", "Sorry to bother you",
         "Not sure if this is the right place, but", "Just checking"
     ],
-    "closers": [
-        "thanks", "thank you", "appreciate it", "please help", "can you check?"
-    ],
+    "closers": ["thanks", "thank you", "appreciate it", "please help", "can you check?"],
     "justifications": [
         "because I need to sort this out today",
         "since my payment is due soon",
         "as I'm trying to reconcile my statements",
         "because I'm seeing something weird in the app",
-        "since I don't want to get charged extra"
+        "since I don't want to get charged extra",
     ],
     "context": [
         "I'm using the mobile app",
@@ -28,88 +29,113 @@ NOISE_TEMPLATES_TRAIN = {
         "I tried again just now",
         "it started happening this morning",
         "I spoke to support earlier",
-        "I travel a lot, not sure if that matters",
-        "I'm abroad at the moment"
+        "I'm abroad at the moment",
     ],
-    "self_corrections": [
-        "— I mean", "— sorry, I meant", "(sorry, I mean)", "(I mean)"
-    ],
+    "self_corrections": ["— I mean", "— sorry, I meant", "(sorry, I mean)", "(I mean)"],
     "followups": [
         "can you confirm the status?",
         "what should I do next?",
         "is there anything I need to verify?",
-        "can you walk me through it?"
+        "can you walk me through it?",
     ],
-    "soft_urgency": [
-        "it's kind of urgent", "ASAP if possible", "today if you can"
-    ],
-    "meta": [
-        "I'm sorry if I'm missing something obvious",
-        "I might be misunderstanding the flow",
-        "I just want to make sure I'm doing this correctly",
-        "if there's a standard procedure, I'm happy to follow it",
-        "I'm trying not to make any mistakes here",
-    ],
-    "diagnostics": [
-        "I already tried logging out and back in",
-        "I restarted the app and retried",
-        "I cleared cache and tried again",
-        "I attempted it from another browser",
-        "I double-checked the details before submitting",
-    ],
+    "soft_urgency": ["it's kind of urgent", "ASAP if possible", "today if you can"],
 }
 
-# Test noise: different style (more formal / cautious / interrogative)
-NOISE_TEMPLATES_TEST = {
+NOISE_TEMPLATES_BANKING_TEST = {
     "openers": [
         "Good afternoon", "Hello there", "Could you please advise",
-        "I would like to ask", "I’m hoping you can clarify"
+        "I would like to ask", "I'm hoping you can clarify"
     ],
-    "closers": [
-        "many thanks", "kind regards", "thank you in advance", "please advise"
-    ],
+    "closers": ["many thanks", "kind regards", "thank you in advance", "please advise"],
     "justifications": [
         "as this affects my account balance",
         "because I need this for my records",
-        "as I’m trying to ensure everything is correct",
-        "since I’m concerned about a potential charge",
-        "because this appears inconsistent"
+        "as I'm trying to ensure everything is correct",
+        "since I'm concerned about a potential charge",
+        "because this appears inconsistent",
     ],
     "context": [
         "I have attempted this multiple times",
-        "I’m currently unable to access the feature",
-        "I’m receiving an error message",
+        "I'm currently unable to access the feature",
+        "I'm receiving an error message",
         "this occurs on both Wi-Fi and mobile data",
         "I have updated the app recently",
-        "I’m using a different device than usual"
+        "I'm using a different device than usual",
     ],
-    "self_corrections": [
-        "— rather", "— to clarify", "(to clarify)", "(rather)"
-    ],
+    "self_corrections": ["— rather", "— to clarify", "(to clarify)", "(rather)"],
     "followups": [
         "could you confirm what is happening?",
         "what is the expected timeline?",
         "what are the next steps?",
-        "is there a formal way to resolve this?"
+        "is there a formal way to resolve this?",
     ],
-    "soft_urgency": [
-        "this is time-sensitive", "at your earliest convenience", "as soon as possible"
-    ],
-    "meta": [
-        "I would appreciate confirmation of the correct process",
-        "I would like to ensure I am following the proper steps",
-        "I am seeking clarification to avoid any incorrect action",
-        "I would appreciate any guidance you can provide",
-        "I would prefer to resolve this in the standard way",
-    ],
-    "diagnostics": [
-        "I have attempted the action multiple times",
-        "I have reinstalled the application and retried",
-        "I have tried both desktop and mobile",
-        "I have verified the information prior to submission",
-        "I have confirmed that my connection is stable",
-    ],
+    "soft_urgency": ["this is time-sensitive", "at your earliest convenience", "as soon as possible"],
 }
+
+# CLINC150 (domain-neutral; avoid "account/app/support/interface" bias)
+NOISE_TEMPLATES_CLINC_TRAIN = {
+    "openers": [
+        "Hey", "Hi", "Hello", "Quick question", "I was wondering",
+        "Can you help me", "One sec",
+    ],
+    "closers": ["thanks", "thank you", "appreciate it", "that helps"],
+    "justifications": [
+        "because I'm trying to figure this out",
+        "since I'm not sure how to proceed",
+        "as I want to make sure I'm doing it right",
+        "because I'm a bit confused",
+        "since I keep getting stuck on it",
+    ],
+    "context": [
+        "I'm on my phone",
+        "I'm on my laptop",
+        "I just tried it again",
+        "this came up earlier today",
+        "I'm in a rush right now",
+        "I'm at home at the moment",
+    ],
+    "self_corrections": ["— wait, I mean", "— actually", "(actually)", "(I mean)"],
+    "followups": ["can you help?", "what do I do next?", "is that right?", "can you explain?"],
+    "soft_urgency": ["if you can", "when you have a chance", "soon if possible"],
+}
+
+NOISE_TEMPLATES_CLINC_TEST = {
+    "openers": [
+        "Hello", "Hi there", "Could you help", "I would like to ask",
+        "Please clarify", "I need to know",
+    ],
+    "closers": ["thank you", "thanks in advance", "much appreciated"],
+    "justifications": [
+        "as I need clarification",
+        "because I want to understand",
+        "since I'm trying to finish this",
+        "as this matters to me",
+        "because I'm double-checking",
+    ],
+    "context": [
+        "I tried this a couple times",
+        "this happened just now",
+        "I'm asking for future reference",
+        "I'm checking to be sure",
+        "I'm doing this step-by-step",
+    ],
+    "self_corrections": ["— to clarify", "— I should say", "(to clarify)", "(I should say)"],
+    "followups": ["what are the next steps?", "can you provide details?", "how should I proceed?", "what should I know?"],
+    "soft_urgency": ["when convenient", "at your earliest opportunity", "as soon as you can"],
+}
+
+
+def choose_templates(is_train: bool, noise_type: str) -> Dict[str, List[str]]:
+    nt = (noise_type or "").lower()
+    if nt == "clinc150":
+        return NOISE_TEMPLATES_CLINC_TRAIN if is_train else NOISE_TEMPLATES_CLINC_TEST
+    # default
+    return NOISE_TEMPLATES_BANKING_TRAIN if is_train else NOISE_TEMPLATES_BANKING_TEST
+
+
+# ----------------------------
+# Mild typos (noise only)
+# ----------------------------
 
 TYPO_PATTERNS = {
     "i": ["i", "I", "1"],
@@ -128,6 +154,10 @@ def normalize_spaces(s: str) -> str:
     return _WHITESPACE_RE.sub(" ", s).strip()
 
 
+def pick(pool: List[str]) -> str:
+    return random.choice(pool)
+
+
 def safe_append_punct(s: str, punct: str) -> str:
     s = s.strip()
     if not s:
@@ -137,20 +167,16 @@ def safe_append_punct(s: str, punct: str) -> str:
     return s + punct
 
 
-def choose_templates(is_train: bool):
-    return NOISE_TEMPLATES_TRAIN if is_train else NOISE_TEMPLATES_TEST
-
-
-def apply_typos(text: str, typo_probability: float = 0.015) -> str:
+def apply_typos_to_noise(text: str, typo_probability: float) -> str:
     out = []
     for ch in text:
         cl = ch.lower()
         if cl in TYPO_PATTERNS and random.random() < typo_probability:
             r = random.random()
             if r < 0.15:
-                continue
-            elif r < 0.30:
-                out.append(ch)
+                continue  # deletion
+            if r < 0.30:
+                out.append(ch)  # duplication
                 out.append(ch)
             else:
                 out.append(random.choice(TYPO_PATTERNS[cl]))
@@ -159,126 +185,173 @@ def apply_typos(text: str, typo_probability: float = 0.015) -> str:
     return "".join(out)
 
 
-def _rand_sentence(T: dict) -> str:
+# ----------------------------
+# Noise fragment builders (return strings that get concatenated)
+# ----------------------------
+
+def frag_prefix(T: Dict[str, List[str]]) -> str:
+    opener = pick(T["openers"]).strip()
+    if not opener.endswith((",", "—")):
+        opener += ","
+    return opener
+
+
+def frag_suffix(T: Dict[str, List[str]]) -> str:
+    tail = pick(T["followups"]) if random.random() < 0.65 else pick(T["closers"])
+    return safe_append_punct(tail, ".")
+
+
+def frag_context(T: Dict[str, List[str]]) -> str:
+    ctx = pick(T["context"]).strip()
+    return safe_append_punct(ctx, ".")
+
+
+def frag_justification(T: Dict[str, List[str]]) -> str:
+    j = pick(T["justifications"]).strip()
+    return safe_append_punct(j, ".")
+
+
+def frag_soft_urgency(T: Dict[str, List[str]]) -> str:
+    u = pick(T["soft_urgency"]).strip()
+    # keep it short; parenthetical is less label-shifting
+    return f"({u})." if not u.endswith((".", "?", "!", ")")) else u
+
+
+def frag_parenthetical(T: Dict[str, List[str]]) -> str:
+    aside = pick(T["context"]) if random.random() < 0.6 else pick(T["justifications"])
+    aside = normalize_spaces(aside)
+    return f"({aside})."
+
+
+def inject_self_correction(original: str, T: Dict[str, List[str]]) -> str:
     """
-    A natural 'ticket-like' sentence that adds bulk without changing intent.
+    Insert a correction marker WITHOUT duplicating original words.
+    This keeps meaning stable across diverse CLINC intents.
     """
-    parts = []
-    if random.random() < 0.35:
-        parts.append(random.choice(T["openers"]))
-    if random.random() < 0.85:
-        parts.append(random.choice(T["context"]))
-    if random.random() < 0.70:
-        parts.append(random.choice(T["diagnostics"]))
-    if random.random() < 0.70:
-        parts.append(random.choice(T["meta"]))
-    if random.random() < 0.70:
-        parts.append(random.choice(T["justifications"]))
-    if random.random() < 0.60:
-        parts.append(random.choice(T["soft_urgency"]))
-    if random.random() < 0.70:
-        parts.append(random.choice(T["followups"]))
-    else:
-        parts.append(random.choice(T["closers"]))
-    # Turn fragments into 1–2 sentences
-    s = " ".join(parts)
-    s = normalize_spaces(s)
-    s = safe_append_punct(s, ".")
-    if random.random() < 0.45:
-        s2 = normalize_spaces(random.choice(T["meta"]) + ". " + random.choice(T["followups"]))
-        s2 = safe_append_punct(s2, ".")
-        return f"{s} {s2}"
-    return s
+    words = original.split()
+    if len(words) < 6:
+        return original
+    insert_at = random.randint(2, min(7, len(words) - 2))
+    marker = pick(T["self_corrections"])
+    new_words = words[:insert_at] + [marker] + words[insert_at:]
+    return normalize_spaces(" ".join(new_words))
+
+
+FRAG_BUILDERS = [frag_prefix, frag_suffix, frag_context, frag_justification, frag_soft_urgency, frag_parenthetical]
 
 
 def add_realistic_noise(
     text: str,
     is_train: bool,
-    target_noise_fraction: float = 0.80,  # <-- what you asked for
-    min_orig_tokens_for_strict: int = 6,
-    max_total_multiplier: float = 6.0,     # safety
+    noise_type: str = "banking77",
+    max_extra_ratio: float = 0.45,
+    typo_chance: float = 0.20,
+    typo_probability: float = 0.02,
 ) -> str:
     """
-    Enforces: noise_tokens / total_tokens ~= target_noise_fraction
-      total_tokens ~= orig_tokens / (1 - target_noise_fraction)
-
-    We do this by appending natural ticket-like sentences until we hit target length.
+    Adds noise to BOTH train and test; test noise differs via templates.
+    Typos are applied ONLY to injected fragments.
     """
     if not text or not text.strip():
         return text
 
-    T = choose_templates(is_train)
+    T = choose_templates(is_train=is_train, noise_type=noise_type)
     original = normalize_spaces(text)
-    orig_tokens = original.split()
-    orig_len = len(orig_tokens)
+    orig_len = len(original.split())
 
-    # For very short queries, strict 80% looks absurd; still heavy, but a bit lower.
-    if orig_len < min_orig_tokens_for_strict:
-        target_noise_fraction = min(target_noise_fraction, 0.65)
+    # Decide ops: 1–2 fragments + optional self-correction insertion
+    num_frags = 1 if random.random() < 0.70 else 2
+    builders = random.sample(FRAG_BUILDERS, k=num_frags)
 
-    # Desired total length so that original is ~ (1 - f) of final
-    desired_total_len = ceil(orig_len / max(1e-6, (1.0 - target_noise_fraction)))
-    hard_cap_len = int(orig_len * max_total_multiplier)
+    # Build fragments (noise-only strings)
+    fragments = [normalize_spaces(b(T)) for b in builders if b(T).strip()]
 
-    # Start with the original preserved as-is, then add noise after it.
-    noisy = safe_append_punct(original, ".")
-    while len(noisy.split()) < desired_total_len and len(noisy.split()) < hard_cap_len:
-        noisy = normalize_spaces(f"{noisy} {_rand_sentence(T)}")
+    # Optionally apply mild typos to noise fragments only
+    if fragments and random.random() < (typo_chance if is_train else (typo_chance * 0.5)):
+        fragments = [apply_typos_to_noise(f, typo_probability=typo_probability) for f in fragments]
 
-    # Very light typos rarely (keeps it readable)
-    if random.random() < (0.12 if is_train else 0.06):
-        noisy = apply_typos(noisy, typo_probability=0.012)
+    # Assemble: pick a structure that doesn’t rewrite original content much
+    noisy = original
+
+    # Optional self-correction insertion (rare; avoid overdoing)
+    if random.random() < (0.18 if is_train else 0.12):
+        noisy = inject_self_correction(noisy, T)
+
+    # Place fragments around the original
+    # Heuristic: if we have a prefix-like fragment (endswith comma/—), put it first
+    prefixish = [f for f in fragments if f.endswith(",") or f.endswith("—")]
+    rest = [f for f in fragments if f not in prefixish]
+
+    if prefixish:
+        noisy = f"{prefixish[0]} {noisy}"
+        rest = rest + prefixish[1:]
+
+    # Put remaining fragments as suffixes (safer)
+    for f in rest:
+        noisy = f"{safe_append_punct(noisy, '.')} {f}"
+
+    noisy = normalize_spaces(noisy)
+
+    # Cap length growth; if too long, keep only one light fragment
+    noisy_len = len(noisy.split())
+    if orig_len > 0 and noisy_len > int(orig_len * (1 + max_extra_ratio)):
+        light = frag_prefix(T) if random.random() < 0.5 else frag_suffix(T)
+        if random.random() < (typo_chance if is_train else (typo_chance * 0.5)):
+            light = apply_typos_to_noise(light, typo_probability=typo_probability)
+        if light.endswith(",") or light.endswith("—"):
+            noisy = normalize_spaces(f"{light} {original}")
+        else:
+            noisy = normalize_spaces(f"{safe_append_punct(original, '.')} {light}")
 
     return noisy
 
 
-def run_add_noise():
+# ----------------------------
+# Main runner
+# ----------------------------
+
+def run_add_noise(noise_type: str):
     """
-    Add heavy realistic noise to every question in train/test.
+    Adds noise to BOTH train and test; test uses different templates (distribution shift).
     """
     paths_config = CONFIG["paths"]
     train_file = paths_config["data"]["train"]
     test_file = paths_config["data"]["test"]
 
+    logger.info(f"Using noise type: {noise_type}")
+
+    # Train
     logger.info(f"Loading training data from {train_file}")
     with open(train_file, "r", encoding="utf-8") as f:
         train_data = json.load(f)
 
-    logger.info(f"Loaded {len(train_data)} training examples")
-
-    for i in range(len(train_data)):
-        train_data[i]["text"] = add_realistic_noise(
-            train_data[i]["text"],
-            is_train=True,
-            target_noise_fraction=0.80,
-        )
-        if (i + 1) % 1000 == 0:
-            logger.info(f"Processed {i + 1} training examples...")
+    for i, ex in enumerate(train_data, start=1):
+        ex["text"] = add_realistic_noise(ex["text"], is_train=True, noise_type=noise_type)
+        if i % 1000 == 0:
+            logger.info(f"Processed {i} training examples...")
 
     logger.info(f"Saving modified training data back to {train_file}")
     with open(train_file, "w", encoding="utf-8") as f:
         json.dump(train_data, f, indent=2, ensure_ascii=False)
+    logger.info(f"✓ Added noise to training set ({len(train_data)} examples)")
 
-    logger.info(f"\nLoading test data from {test_file}")
+    # Test
+    logger.info(f"Loading test data from {test_file}")
     with open(test_file, "r", encoding="utf-8") as f:
         test_data = json.load(f)
 
-    logger.info(f"Loaded {len(test_data)} test examples")
-
-    for i in range(len(test_data)):
-        test_data[i]["text"] = add_realistic_noise(
-            test_data[i]["text"],
-            is_train=False,
-            target_noise_fraction=0.80,
-        )
-        if (i + 1) % 1000 == 0:
-            logger.info(f"Processed {i + 1} test examples...")
+    for i, ex in enumerate(test_data, start=1):
+        ex["text"] = add_realistic_noise(ex["text"], is_train=False, noise_type=noise_type)
+        if i % 1000 == 0:
+            logger.info(f"Processed {i} test examples...")
 
     logger.info(f"Saving modified test data back to {test_file}")
     with open(test_file, "w", encoding="utf-8") as f:
         json.dump(test_data, f, indent=2, ensure_ascii=False)
+    logger.info(f"✓ Added noise to test set ({len(test_data)} examples)")
 
-    logger.info(f"\n{'=' * 100}")
-    logger.info("✓ Heavy realistic noise augmentation complete!")
-    logger.info("✓ Noise occupies ~80% of final text (by token fraction).")
-    logger.info("✓ Original intent is preserved as the first sentence.")
+    logger.info(f"\n{'=' * 80}")
+    logger.info("✓ Noise augmentation complete")
+    logger.info(f"✓ Noise type: {noise_type}")
+    logger.info("✓ Train/test noise differ via separate template pools")
+    logger.info("✓ Typos applied to injected noise fragments only")
