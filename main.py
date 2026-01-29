@@ -22,6 +22,8 @@ if __name__ == '__main__':
         run_preprocess()
     
     if args.add_noise:
+        if not args.noise_type:
+            parser.error("--noise_type is required when using --add_noise")
         logger.info("=" * 100)
         logger.info("STEP: ADD NOISE")
         logger.info("=" * 100)
