@@ -6,12 +6,15 @@ all experiment runs, groups them by experiment type, and generates
 publication-quality tables and charts following ACL/NeurIPS/EMNLP standards.
 """
 
+import gc
 import json
 import os
 import re
 from collections import defaultdict
 from typing import Any, Dict, List, Optional, Tuple
 
+import matplotlib
+matplotlib.use('Agg')  # Use non-interactive backend to reduce memory usage
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -336,84 +339,117 @@ def create_charts(aggregated: Dict[str, Dict[str, List[float]]], output_dir: str
         'avg_latency_ms', 'inference_flops_per_sample', 'inference_peak_memory_mb',
     ]
     
-    # Add training metrics if available
+    # Add training metrics if available - limit to essential ones to reduce memory
     training_metrics = [m for m in all_metrics if m.startswith('training_')]
-    key_metrics.extend([m for m in training_metrics if 'flops' in m or 'memory' in m])
+    # Only include total_flops and peak_memory, skip per-sample and detailed memory
+    essential_training = [
+        m for m in training_metrics 
+        if ('total_flops' in m or m == 'training_peak_memory_mb')
+        and 'per_sample' not in m 
+        and 'memory_info' not in m
+    ]
+    key_metrics.extend(essential_training)
     
     # Filter to metrics that exist
     key_metrics = [m for m in key_metrics if m in all_metrics]
     
+    logger.info(f"Creating {len(key_metrics)} charts...")
+    
     # Create charts for each metric
-    for metric in key_metrics:
-        fig, ax = plt.subplots(figsize=(12, 6))
-        
-        experiment_names = []
-        means = []
-        stds = []
-        
-        # Sort experiment names using custom order
-        sorted_exp_names = sorted(aggregated.keys(), key=get_experiment_sort_key)
-        for exp_name in sorted_exp_names:
-            if metric not in aggregated[exp_name]:
+    for metric_idx, metric in enumerate(key_metrics):
+        try:
+            experiment_names = []
+            means = []
+            stds = []
+            
+            # Sort experiment names using custom order
+            sorted_exp_names = sorted(aggregated.keys(), key=get_experiment_sort_key)
+            for exp_name in sorted_exp_names:
+                if metric not in aggregated[exp_name]:
+                    continue
+                
+                stats = compute_statistics(aggregated[exp_name][metric])
+                if stats['count'] > 0:
+                    experiment_names.append(exp_name)
+                    means.append(stats['mean'])
+                    stds.append(stats['std'])
+            
+            if not experiment_names:
                 continue
             
-            stats = compute_statistics(aggregated[exp_name][metric])
-            if stats['count'] > 0:
-                experiment_names.append(exp_name)
-                means.append(stats['mean'])
-                stds.append(stats['std'])
-        
-        if not experiment_names:
+            # Calculate figure size more conservatively to reduce memory
+            num_experiments = len(experiment_names)
+            # More aggressive size reduction: max 12 inches, smaller multiplier
+            fig_width = min(max(8, num_experiments * 0.8), 12)
+            fig_height = 6  # Reduced from 7
+            
+            # Create figure with calculated size
+            fig, ax = plt.subplots(figsize=(fig_width, fig_height))
+            
+            # Create line plot with error bars
+            x_pos = np.arange(len(experiment_names))
+            ax.errorbar(x_pos, means, yerr=stds, fmt='-o', capsize=5, capthick=1.5,
+                       markersize=6, linewidth=1.5, alpha=0.7, 
+                       markerfacecolor='white', markeredgecolor='black', 
+                       markeredgewidth=1, ecolor='black', elinewidth=1)
+            
+            # Customize plot
+            ax.set_xlabel('Experiment Type', fontweight='bold')
+            ax.set_ylabel(_format_metric_name(metric), fontweight='bold')
+            ax.set_title(f'{_format_metric_name(metric)} Across Experiments', 
+                        fontweight='bold', pad=15)
+            ax.set_xticks(x_pos)
+            ax.set_xticklabels(experiment_names, rotation=45, ha='right', fontsize=9)
+            ax.grid(True, alpha=0.3, axis='y')
+            
+            # Add value labels above each point - format large numbers efficiently
+            y_max = max(m + s for m, s in zip(means, stds)) if means else 0
+            y_range = max(means) - min(means) if means else 1
+            label_offset = max(y_range * 0.03, y_max * 0.02) if y_range > 0 else 0.01
+            
+            for i, (mean, std) in enumerate(zip(means, stds)):
+                label_y = mean + std + label_offset
+                # Format large numbers more efficiently to reduce text rendering memory
+                if abs(mean) > 1e12:
+                    label_text = f'{mean:.2e}'
+                elif abs(mean) > 1e6:
+                    label_text = f'{mean/1e6:.2f}M'
+                else:
+                    label_text = f'{mean:.4f}'
+                ax.text(i, label_y, label_text, ha='center', va='bottom', fontsize=7)
+            
+            # Use subplots_adjust
+            plt.subplots_adjust(bottom=0.25, top=0.90, left=0.12, right=0.95)
+            
+            # Save figure with reduced DPI to save memory
+            safe_metric_name = metric.replace('/', '_').replace(' ', '_')
+            output_path = os.path.join(output_dir, f'{safe_metric_name}.png')
+            # Reduce DPI from 200 to 150 to significantly reduce memory usage
+            # Don't use bbox_inches='tight' as it can cause memory issues
+            plt.savefig(output_path, dpi=150)
+            logger.info(f"Saved chart ({metric_idx+1}/{len(key_metrics)}): {output_path}")
+            
+            # Explicitly close and clean up
             plt.close(fig)
+            del fig, ax
+            gc.collect()  # Force garbage collection after each chart
+            
+        except MemoryError as e:
+            logger.error(f"Memory error creating chart for {metric}: {e}. Skipping...")
+            try:
+                plt.close('all')
+            except:
+                pass
+            gc.collect()
             continue
-        
-        # Adjust figure size based on number of experiments
-        num_experiments = len(experiment_names)
-        # Cap maximum width to prevent memory issues (max 15 inches)
-        # Increase multiplier to give more space for labels
-        fig_width = min(max(12, num_experiments * 1.0), 15)
-        fig_height = 7  # Increase height to accommodate title and labels
-        fig.set_size_inches(fig_width, fig_height)
-        
-        # Create line plot with error bars
-        x_pos = np.arange(len(experiment_names))
-        ax.errorbar(x_pos, means, yerr=stds, fmt='-o', capsize=5, capthick=1.5,
-                   markersize=8, linewidth=2, alpha=0.7, 
-                   markerfacecolor='white', markeredgecolor='black', 
-                   markeredgewidth=1.5, ecolor='black', elinewidth=1.5)
-        
-        # Customize plot
-        ax.set_xlabel('Experiment Type', fontweight='bold')
-        ax.set_ylabel(_format_metric_name(metric), fontweight='bold')
-        ax.set_title(f'{_format_metric_name(metric)} Across Experiments', 
-                    fontweight='bold', pad=20)
-        ax.set_xticks(x_pos)
-        ax.set_xticklabels(experiment_names, rotation=45, ha='right')
-        ax.grid(True, alpha=0.3, axis='y')
-        
-        # Add value labels above each point
-        y_max = max(m + s for m, s in zip(means, stds)) if means else 0
-        y_range = max(means) - min(means) if means else 1
-        label_offset = max(y_range * 0.03, y_max * 0.02) if y_range > 0 else 0.01
-        
-        for i, (mean, std) in enumerate(zip(means, stds)):
-            label_y = mean + std + label_offset
-            ax.text(i, label_y, f'{mean:.4f}', ha='center', va='bottom', fontsize=8)
-        
-        # Use subplots_adjust instead of tight_layout for better control
-        # Adjust margins to accommodate rotated labels and title
-        # Increase bottom margin for rotated x-axis labels, top for title
-        plt.subplots_adjust(bottom=0.25, top=0.90, left=0.12, right=0.95)
-        
-        # Save figure
-        # Don't use bbox_inches='tight' as it can cause memory issues with large figures
-        # We already control margins with subplots_adjust
-        # Reduce DPI to 200 to prevent memory issues while maintaining good quality
-        safe_metric_name = metric.replace('/', '_').replace(' ', '_')
-        output_path = os.path.join(output_dir, f'{safe_metric_name}.png')
-        plt.savefig(output_path, dpi=200)
-        logger.info(f"Saved chart: {output_path}")
-        plt.close(fig)
+        except Exception as e:
+            logger.error(f"Error creating chart for {metric}: {e}. Skipping...")
+            try:
+                plt.close('all')
+            except:
+                pass
+            gc.collect()
+            continue
 
 
 def _format_metric_name(metric: str) -> str:
