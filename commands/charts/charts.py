@@ -2,7 +2,7 @@
 Create bar charts comparing F1 scores across aggregations.
 
 This module reads aggregated_metrics.csv files from selected aggregations,
-extracts F1 scores for default, custom attention, and custom fft attention experiments,
+extracts F1 scores for default, custom attention, custom fft attention, custom last, and custom fft last experiments,
 and creates a bar chart with error bars.
 """
 
@@ -64,7 +64,7 @@ def extract_f1_scores(aggregation_path: str) -> Dict[str, Tuple[float, float]]:
     
     Returns:
         Dictionary mapping experiment names to (mean, std) tuples for F1 scores.
-        Only includes: default, custom_attention, custom_fft_attention
+        Only includes: default, custom_attention, custom_fft_attention, custom_last, custom_fft_last
     """
     csv_path = os.path.join(aggregation_path, "aggregated_metrics.csv")
     
@@ -84,7 +84,9 @@ def extract_f1_scores(aggregation_path: str) -> Dict[str, Tuple[float, float]]:
     target_experiments = {
         'default': r'.*_default$',
         'custom_attention': r'.*_custom_attention$',
-        'custom_fft_attention': r'.*_custom_fft_attention$'
+        'custom_fft_attention': r'.*_custom_fft_attention$',
+        'custom_last': r'.*_custom_last$',
+        'custom_fft_last': r'.*_custom_fft_last$'
     }
     
     # Iterate through rows and find matching experiments
@@ -116,7 +118,8 @@ def create_f1_bar_chart(aggregations_data: Dict[int, Dict[str, Tuple[float, floa
     Args:
         aggregations_data: Dictionary mapping aggregation numbers to their F1 scores.
                           Format: {agg_num: {'default': (mean, std), 'custom_attention': (mean, std), 
-                                             'custom_fft_attention': (mean, std)}}
+                                             'custom_fft_attention': (mean, std), 'custom_last': (mean, std),
+                                             'custom_fft_last': (mean, std)}}
         output_dir: Directory to save the chart
         aggregation_names: Optional dictionary mapping aggregation numbers to custom names.
                           If None, uses default "Aggregation {num}" format.
@@ -126,8 +129,8 @@ def create_f1_bar_chart(aggregations_data: Dict[int, Dict[str, Tuple[float, floa
     os.makedirs(output_dir, exist_ok=True)
     
     # Define experiment types and their display names
-    exp_types = ['default', 'custom_attention', 'custom_fft_attention']
-    exp_labels = ['Default', 'Custom Attention', 'Custom FFT Attention']
+    exp_types = ['default', 'custom_attention', 'custom_fft_attention', 'custom_last', 'custom_fft_last']
+    exp_labels = ['Default', 'Custom Attention', 'Custom FFT Attention', 'Custom Last', 'Custom FFT Last']
     
     # Get aggregation numbers in the specified order, or sorted if no order provided
     if aggregation_order:
@@ -146,7 +149,7 @@ def create_f1_bar_chart(aggregations_data: Dict[int, Dict[str, Tuple[float, floa
     num_exp_types = len(exp_types)
     
     # Calculate bar positions
-    # Each aggregation has 3 bars (one for each exp type) with no space between them
+    # Each aggregation has bars (one for each exp type) with no space between them
     # Space between different aggregations
     bar_width = 0.8  # Width of each bar
     group_width = num_exp_types * bar_width  # Total width of one aggregation group
@@ -190,7 +193,7 @@ def create_f1_bar_chart(aggregations_data: Dict[int, Dict[str, Tuple[float, floa
     color_map = {agg_num: colors[i] for i, agg_num in enumerate(agg_nums)}
     
     # Define hatch patterns for each experiment type
-    hatches = ['', '///', '...']  # No hatch, diagonal lines, dots
+    hatches = ['', '///', '...', 'xxx', '+++']  # No hatch, diagonal lines, dots, crosshatch, plus
     
     # Plot bars
     bars = []
@@ -306,7 +309,7 @@ def run_charts(aggregation_nums: List[int], aggregations_dir: str = "aggregation
             continue
         
         # Check if we have at least one of the required experiment types
-        required_types = ['default', 'custom_attention', 'custom_fft_attention']
+        required_types = ['default', 'custom_attention', 'custom_fft_attention', 'custom_last', 'custom_fft_last']
         if not any(exp_type in f1_scores for exp_type in required_types):
             logger.warning(f"None of the required experiment types found in aggregation {agg_num}, skipping...")
             continue
