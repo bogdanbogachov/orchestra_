@@ -279,11 +279,17 @@ def create_aggregation_table(aggregated: Dict[str, Dict[str, List[float]]]) -> p
         'accuracy', 'precision', 'recall', 'f1',
         'avg_latency_ms', 'std_latency_ms',
         'inference_flops_per_sample', 'inference_peak_memory_mb',
+        'inference_energy_consumption_energy_consumed_kwh',  # Total inference energy
+        'inference_carbon_footprint_emissions_gco2eq',  # Total inference carbon footprint
     ]
     
     # Add training metrics if available
     training_metrics = [m for m in all_metrics if m.startswith('training_')]
     key_metrics.extend([m for m in training_metrics if 'flops' in m or 'memory' in m])
+    
+    # Add training energy and carbon metrics if available
+    key_metrics.append('training_energy_consumption_energy_consumed_kwh')  # Total training energy
+    key_metrics.append('training_carbon_footprint_emissions_gco2eq')  # Total training carbon footprint
     
     # Filter to metrics that exist
     key_metrics = [m for m in key_metrics if m in all_metrics]
