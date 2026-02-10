@@ -233,11 +233,9 @@ def create_f1_bar_chart(aggregations_data: Dict[int, Dict[str, Tuple[float, floa
     else:
         ax.set_xticklabels([f'Agg {agg_num}' for agg_num in agg_nums])
     
-    # Set labels and title
+    # Set labels
     ax.set_xlabel('Aggregation', fontweight='bold')
     ax.set_ylabel('F1 Score', fontweight='bold')
-    ax.set_title('F1 Scores Across Aggregations and Experiment Configurations', 
-                fontweight='bold', pad=20)
     
     # Add grid
     ax.grid(True, alpha=0.3, axis='y')
