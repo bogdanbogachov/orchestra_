@@ -1,10 +1,12 @@
 from cli.parser import build_parser
 from commands.data_processing.preprocess import run_preprocess
+from commands.data_processing.add_noise import run_add_noise
 from commands.training.finetune import run_finetune
 from commands.inference.default import run_infer_default
 from commands.inference.custom import run_infer_custom
 from commands.evaluation.evaluate import run_evaluation
 from commands.evaluation.aggregate_results import run_aggregate_results
+from commands.charts.charts import run_charts
 from config import CONFIG
 from logger_config import logger
 
@@ -19,6 +21,14 @@ if __name__ == '__main__':
         logger.info("STEP: PREPROCESS DATA")
         logger.info("=" * 100)
         run_preprocess()
+    
+    if args.add_noise:
+        if not args.noise_type:
+            parser.error("--noise_type is required when using --add_noise")
+        logger.info("=" * 100)
+        logger.info("STEP: ADD NOISE")
+        logger.info("=" * 100)
+        run_add_noise(noise_type=args.noise_type)
     
     if args.finetune:
         logger.info("=" * 100)
@@ -49,3 +59,13 @@ if __name__ == '__main__':
         logger.info("STEP: AGGREGATE RESULTS")
         logger.info("=" * 100)
         run_aggregate_results(global_exp_num=args.global_exp_num)
+    
+    if args.charts:
+        if not args.aggregation_nums:
+            parser.error("--aggregation_nums is required when using --charts")
+        if args.aggregation_names and len(args.aggregation_names) != len(args.aggregation_nums):
+            parser.error(f"--aggregation_names must have the same number of elements as --aggregation_nums ({len(args.aggregation_nums)} required, got {len(args.aggregation_names)})")
+        logger.info("=" * 100)
+        logger.info("STEP: CREATE CHARTS")
+        logger.info("=" * 100)
+        run_charts(aggregation_nums=args.aggregation_nums, aggregation_names=args.aggregation_names)

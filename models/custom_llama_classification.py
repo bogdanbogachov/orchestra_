@@ -21,11 +21,11 @@ class LlamaClassificationHead(nn.Module):
         fft_result = torch.fft.fft(hidden_states, dim=1)
 
         seq_length = hidden_states.size(1)
-        rows_to_keep = max(1, int(seq_length * 0.3))
-        
+        rows_to_keep = max(1, int(seq_length * 0.4))
+
         mask = torch.zeros(seq_length, device=hidden_states.device, dtype=torch.float32)
         mask[:rows_to_keep] = 1.0
-        
+
         if seq_length > rows_to_keep:
             neg_start = seq_length - rows_to_keep + 1
             if neg_start < seq_length:
@@ -33,10 +33,10 @@ class LlamaClassificationHead(nn.Module):
 
         mask = mask.unsqueeze(0).unsqueeze(-1)
         fft_filtered = fft_result * mask
-        
+
         filtered_states = torch.fft.ifft(fft_filtered, dim=1)
         filtered_states = filtered_states.real
-        
+
         return filtered_states
     
     def pool_hidden_states(self, hidden_states, attention_mask=None):

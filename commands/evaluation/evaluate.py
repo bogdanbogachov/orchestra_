@@ -79,16 +79,18 @@ def run_evaluation(head: Optional[str] = None):
     experiment_name = CONFIG.get("experiment", "orchestra")
     experiments_dir = paths_config["experiments"]
     
-    # Extract global experiment number and use nested directory structure
-    global_exp_num = extract_global_experiment_number(experiment_name)
-    if global_exp_num is not None:
-        # New structure: experiments/global_exp_num/experiment_name
-        experiment_dir = os.path.join(experiments_dir, str(global_exp_num), experiment_name)
-        logger.info(f"Using nested directory structure: experiments/{global_exp_num}/{experiment_name}")
+    # Extract global_exp_num and restructure path
+    import re
+    match = re.match(r'^(.+)_(\d+)_(\d+)$', experiment_name)
+    if match:
+        base_name = match.group(1)
+        global_exp_num = match.group(2)
+        per_config_exp_num = match.group(3)
+        base_with_per_config = f"{base_name}_{per_config_exp_num}"
+        experiment_dir = os.path.join(experiments_dir, global_exp_num, base_with_per_config)
     else:
-        # Fallback to old structure if global number can't be extracted
+        # Fallback for non-standard experiment names
         experiment_dir = os.path.join(experiments_dir, experiment_name)
-        logger.warning(f"Could not extract global experiment number from '{experiment_name}', using flat structure")
     
     os.makedirs(experiment_dir, exist_ok=True)
 
@@ -206,43 +208,7 @@ def run_evaluation(head: Optional[str] = None):
             "memory_info": inference_memory_info,
         },
     }
-    
-    # Add milestone model results if available
-    if head_metrics_milestone is not None and payload_milestone is not None and milestone_threshold_percent is not None:
-        metrics_milestone = payload_milestone.get("metrics", {})
-        milestone_key = f"milestone_{milestone_threshold_percent}_percent"
-        head_results[milestone_key] = {
-            "model_type": f"{milestone_threshold_percent}_percent_milestone",
-            **head_metrics_milestone,
-            "inference_metrics": {
-                "flops_per_sample": int(metrics_milestone.get("flops_per_sample", 0)),
-                "total_flops": int(metrics_milestone.get("total_flops", 0)),
-                "peak_memory_mb": float(metrics_milestone.get("peak_memory_mb", 0.0)),
-                "memory_info": metrics_milestone.get("memory_info", {}),
-            },
-        }
-        
-        # Add inference energy and carbon metrics for milestone if available
-        inference_energy_milestone = metrics_milestone.get("energy_consumption", {})
-        inference_carbon_milestone = metrics_milestone.get("carbon_footprint", {})
-        if inference_energy_milestone:
-            head_results[milestone_key]["inference_metrics"]["energy_consumption"] = inference_energy_milestone
-        if inference_carbon_milestone:
-            head_results[milestone_key]["inference_metrics"]["carbon_footprint"] = inference_carbon_milestone
-        
-        # Try to load milestone training metrics if available (find dynamically)
-        milestone_metrics_pattern = os.path.join(experiment_dir, chosen_head, "milestone_*_percent_metrics.json")
-        milestone_metrics_files = glob.glob(milestone_metrics_pattern)
-        milestone_metrics_path = milestone_metrics_files[0] if milestone_metrics_files else None
-        if os.path.exists(milestone_metrics_path):
-            try:
-                with open(milestone_metrics_path, "r", encoding="utf-8") as f:
-                    milestone_training_metrics = json.load(f)
-                head_results[milestone_key]["training_metrics_at_milestone"] = milestone_training_metrics
-                logger.info(f"✓ Loaded {milestone_threshold_percent}% milestone training metrics from {milestone_metrics_path}")
-            except Exception as e:
-                logger.warning(f"Could not load milestone training metrics: {e}")
-    
+
     # Add inference energy and carbon metrics if available
     if inference_energy_consumption:
         head_results["inference_metrics"]["energy_consumption"] = inference_energy_consumption

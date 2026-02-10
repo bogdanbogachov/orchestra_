@@ -99,6 +99,30 @@ get_job_start_time() {
     return 1
 }
 
+# ============================================================================
+# SEED CONFIGURATION: Predefined seeds for reproducibility
+# ============================================================================
+# Define 10 predefined seeds - each experiment number (1st, 2nd, 3rd, etc.) 
+# will use the corresponding seed from this array
+PREDEFINED_SEEDS=(42 123 456 789 1011 1213 1415 1617 1819 2021)
+
+# Function to get seed for an experiment based on per-config experiment number
+get_seed_for_experiment() {
+    local exp_name=$1
+    # Extract per_config_exp_num from experiment name
+    # Format: base_name_global_exp_num_per_config_exp_num
+    # Example: "banking77_noise_custom_attention_51_3" -> per_config_exp_num=3
+    if [[ "$exp_name" =~ _([0-9]+)$ ]]; then
+        local per_config_exp_num=${BASH_REMATCH[1]}
+        # Convert to 0-based index and use modulo to handle more than 10 experiments
+        local seed_index=$(( (per_config_exp_num - 1) % ${#PREDEFINED_SEEDS[@]} ))
+        echo "${PREDEFINED_SEEDS[$seed_index]}"
+    else
+        # Fallback: use first seed if pattern doesn't match
+        echo "${PREDEFINED_SEEDS[0]}"
+    fi
+}
+
 # Function to wait for job to start and run for specified minutes
 wait_for_job_runtime() {
     local job_id=$1
@@ -110,9 +134,9 @@ wait_for_job_runtime() {
     # Give the job a moment to appear in the queue
     sleep 2
     
-    # Wait for job to start (max 10 minutes)
+    # Wait for job to start (max 65 seconds)
     # We wait for it to be RUNNING, but PENDING is also acceptable (job exists)
-    local max_wait=600
+    local max_wait=65
     local waited=2
     while ! is_job_running "$job_id"; do
         # Get current status for logging
@@ -209,6 +233,9 @@ submit_job() {
     local d_inf=$6
     local c_inf=$7
     
+    # Get seed for this experiment based on per-config experiment number
+    local seed=$(get_seed_for_experiment "$exp_name")
+    
     # Export environment variables
     export EXP="$exp_name"
     export EVAL="$eval_head"
@@ -217,6 +244,7 @@ submit_job() {
     export FFT="$fft"
     export D_INF="$d_inf"
     export C_INF="$c_inf"
+    export SEED="$seed"  # Add seed as environment variable
     
     # Send informational messages to stderr so they don't get captured
     echo "==========================================" >&2
@@ -228,6 +256,7 @@ submit_job() {
     echo "  FFT=$FFT" >&2
     echo "  D_INF=$D_INF" >&2
     echo "  C_INF=$C_INF" >&2
+    echo "  SEED=$SEED" >&2
     echo "==========================================" >&2
     
     # Submit the job
