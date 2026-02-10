@@ -41,6 +41,37 @@ def _compute_metrics(y_true: np.ndarray, y_pred: np.ndarray, latencies_ms: Optio
         out["std_latency_ms"] = float(lat.std())
     return out
 
+def extract_global_experiment_number(experiment_name: str) -> Optional[int]:
+    """
+    Extract global experiment number from experiment name.
+    
+    Format: base_name_global_exp_num_per_config_exp_num
+    Example: "35_l_default_8_1" -> 8
+    Example: "35_L_custom_last_8_1" -> 8
+    """
+    import re
+    # Pattern: base_name_global_exp_num_per_config_exp_num
+    # Extract the second-to-last number (global experiment number)
+    match = re.match(r'^(.+)_(\d+)_(\d+)$', experiment_name)
+    if match:
+        return int(match.group(2))  # global_exp_num is the second-to-last number
+    
+    # Try alternative pattern in case format is slightly different
+    # Look for pattern: ..._number_number at the end
+    parts = experiment_name.split('_')
+    if len(parts) >= 3:
+        try:
+            # Try to parse last two parts as numbers
+            last_num = int(parts[-1])
+            second_last_num = int(parts[-2])
+            # If both are numbers, return the second-to-last
+            return second_last_num
+        except (ValueError, IndexError):
+            pass
+    
+    return None
+
+
 def run_evaluation(head: Optional[str] = None):
     logger.info("Starting evaluation pipeline...")
     
@@ -86,24 +117,64 @@ def run_evaluation(head: Optional[str] = None):
         },
     }
 
-    # Evaluate ONE head at a time.
-    pred_path = default_pred_path if chosen_head == "default_head" else custom_pred_path
-    if not os.path.exists(pred_path):
-        raise FileNotFoundError(f"Missing predictions for {chosen_head}: {pred_path}. Run inference first.")
+    # Evaluate best model and milestone model if available
+    head_dir = os.path.join(experiment_dir, chosen_head)
+    best_pred_path = os.path.join(head_dir, "test_predictions_best.json")
+    
+    # Find milestone prediction file dynamically (e.g., test_predictions_95percent.json)
+    import glob
+    milestone_pattern = os.path.join(head_dir, "test_predictions_*percent.json")
+    milestone_files = glob.glob(milestone_pattern)
+    milestone_pred_path = milestone_files[0] if milestone_files else None
+    
+    # Fallback to default prediction file if best doesn't exist
+    default_pred_path_for_head = default_pred_path if chosen_head == "default_head" else custom_pred_path
+    if not os.path.exists(best_pred_path):
+        best_pred_path = default_pred_path_for_head
+    
+    if not os.path.exists(best_pred_path):
+        raise FileNotFoundError(f"Missing predictions for {chosen_head}: {best_pred_path}. Run inference first.")
 
-    payload = _load_predictions(pred_path)
-    preds = np.asarray([int(x["pred"]) for x in payload["predictions"]], dtype=np.int64)
-    if len(preds) != len(y_true):
+    # Evaluate best model
+    logger.info(f"Evaluating best model predictions from {best_pred_path}")
+    payload_best = _load_predictions(best_pred_path)
+    preds_best = np.asarray([int(x["pred"]) for x in payload_best["predictions"]], dtype=np.int64)
+    if len(preds_best) != len(y_true):
         raise ValueError(
-            f"Prediction/label length mismatch for {chosen_head}: y_true={len(y_true)}, preds={len(preds)}"
+            f"Prediction/label length mismatch for {chosen_head} (best): y_true={len(y_true)}, preds={len(preds_best)}"
         )
 
-    lat = [float(x.get("latency_ms", 0.0)) for x in payload["predictions"]]
-    # Exclude first prediction from latency statistics (warmup/cold start)
-    lat_for_stats = lat[1:] if len(lat) > 1 else lat
-    if len(lat) > 1:
-        logger.info(f"  Excluding first prediction from latency stats (warmup: {lat[0]:.2f} ms, using {len(lat_for_stats)} samples)")
-    head_metrics = _compute_metrics(y_true, preds, lat_for_stats)
+    lat_best = [float(x.get("latency_ms", 0.0)) for x in payload_best["predictions"]]
+    lat_for_stats_best = lat_best[1:] if len(lat_best) > 1 else lat_best
+    if len(lat_best) > 1:
+        logger.info(f"  Excluding first prediction from latency stats (warmup: {lat_best[0]:.2f} ms, using {len(lat_for_stats_best)} samples)")
+    head_metrics_best = _compute_metrics(y_true, preds_best, lat_for_stats_best)
+    
+    # Evaluate milestone model if available
+    head_metrics_milestone = None
+    payload_milestone = None
+    milestone_threshold_percent = None
+    if milestone_pred_path and os.path.exists(milestone_pred_path):
+        # Extract threshold from filename (e.g., "test_predictions_95percent.json" -> 95)
+        import re
+        match = re.search(r'(\d+)percent', os.path.basename(milestone_pred_path))
+        milestone_threshold_percent = match.group(1) if match else "95"  # Default to 95 if not found
+        threshold_percent = milestone_threshold_percent
+        logger.info(f"Evaluating {threshold_percent}% milestone model predictions from {milestone_pred_path}")
+        payload_milestone = _load_predictions(milestone_pred_path)
+        preds_milestone = np.asarray([int(x["pred"]) for x in payload_milestone["predictions"]], dtype=np.int64)
+        if len(preds_milestone) != len(y_true):
+            logger.warning(f"Prediction/label length mismatch for {chosen_head} ({threshold_percent}%): y_true={len(y_true)}, preds={len(preds_milestone)}")
+        else:
+            lat_milestone = [float(x.get("latency_ms", 0.0)) for x in payload_milestone["predictions"]]
+            lat_for_stats_milestone = lat_milestone[1:] if len(lat_milestone) > 1 else lat_milestone
+            if len(lat_milestone) > 1:
+                logger.info(f"  Excluding first prediction from latency stats (warmup: {lat_milestone[0]:.2f} ms, using {len(lat_for_stats_milestone)} samples)")
+            head_metrics_milestone = _compute_metrics(y_true, preds_milestone, lat_for_stats_milestone)
+    
+    # Use best model metrics as primary
+    head_metrics = head_metrics_best
+    payload = payload_best
     
     # Extract FLOPs and memory metrics from predictions payload (inference metrics)
     metrics = payload.get("metrics", {})
@@ -128,6 +199,7 @@ def run_evaluation(head: Optional[str] = None):
     head_results = {
         **common,
         "head": chosen_head,
+        "model_type": "best",
         **head_metrics,
         "inference_metrics": {
             "flops_per_sample": int(inference_flops_per_sample),

@@ -73,7 +73,19 @@ def _load_custom_model_tokenizer_and_head(adapter_path: Optional[str] = None):
                 pooling_strategy=pooling_strategy,
                 use_fft=use_fft,
             ).to(base_model.device)
-            classifier.load_state_dict(classifier_state)
+            
+            # Check for missing/unexpected keys when loading
+            result = classifier.load_state_dict(classifier_state, strict=False)
+            if result.missing_keys:
+                logger.warning(f"⚠️ Missing keys when loading classifier: {result.missing_keys}")
+                logger.warning("⚠️ Some classifier weights were NOT loaded - this may cause poor performance!")
+            if result.unexpected_keys:
+                logger.warning(f"⚠️ Unexpected keys in classifier checkpoint: {result.unexpected_keys}")
+            
+            if not result.missing_keys and not result.unexpected_keys:
+                logger.info("✓ Successfully loaded all classifier weights")
+            else:
+                logger.error("❌ Classifier state dict has mismatched keys - accuracy may be severely degraded!")
         else:
             logger.info("Classifier not found, using randomly initialized classifier")
 
@@ -87,8 +99,15 @@ def _predict_custom_single(
     classifier,
     input_text: str,
     labels=None,
+    max_length: int = 512,
 ) -> Dict[str, Any]:
-    inputs = tokenizer(input_text, return_tensors="pt", padding=True, truncation=True)
+    inputs = tokenizer(
+        input_text,
+        return_tensors="pt",
+        padding="max_length",
+        truncation=True,
+        max_length=max_length,
+    )
     inputs = {k: v.to(base_model.device) for k, v in inputs.items()}
 
     with torch.no_grad():
@@ -113,6 +132,10 @@ def run_infer_custom(
     If input is a path to a JSON file (list of {"text","label"}) OR None -> runs dataset inference and saves predictions.
     """
     base_model, tokenizer, classifier, resolved_adapter_path = _load_custom_model_tokenizer_and_head(adapter_path)
+
+    # Get max_length from training config to match training tokenization
+    training_config = CONFIG.get("training", {})
+    max_length = training_config.get("max_length", 512)
 
     # Dataset mode
     if input_text_or_json is None or (isinstance(input_text_or_json, (str, os.PathLike)) and os.path.exists(str(input_text_or_json))):
@@ -154,7 +177,7 @@ def run_infer_custom(
             text = item["text"]
             true_label = item.get("label")
             start = time.time()
-            out = _predict_custom_single(base_model, tokenizer, classifier, text, labels=None)
+            out = _predict_custom_single(base_model, tokenizer, classifier, text, labels=None, max_length=max_length)
             latency_ms = (time.time() - start) * 1000.0
             probs = out["probs"].squeeze(0).detach().cpu().tolist()
             pred = int(int(torch.tensor(probs).argmax().item()))
@@ -162,7 +185,13 @@ def run_infer_custom(
             # Calculate FLOPs on first sample
             if i == 0:
                 try:
-                    inputs = tokenizer(text, return_tensors="pt", padding=True, truncation=True)
+                    inputs = tokenizer(
+                        text,
+                        return_tensors="pt",
+                        padding="max_length",
+                        truncation=True,
+                        max_length=max_length,
+                    )
                     inputs = {k: v.to(device) for k, v in inputs.items()}
                     
                     # Calculate FLOPs for base model
@@ -287,4 +316,6 @@ def run_infer_custom(
         return payload
 
     # Single-text mode
-    return _predict_custom_single(base_model, tokenizer, classifier, str(input_text_or_json), labels=labels)
+    training_config = CONFIG.get("training", {})
+    max_length = training_config.get("max_length", 512)
+    return _predict_custom_single(base_model, tokenizer, classifier, str(input_text_or_json), labels=labels, max_length=max_length)

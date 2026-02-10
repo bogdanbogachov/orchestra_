@@ -59,6 +59,19 @@ def extract_base_name(experiment_name: str) -> Optional[str]:
     return None
 
 
+def extract_global_experiment_number(experiment_name: str) -> Optional[int]:
+    """
+    Extract global experiment number from full experiment name.
+    
+    Example: "35_l_default_8_1" -> 8
+    Pattern: base_name_global_exp_num_per_config_exp_num
+    """
+    match = re.match(r'^(.+)_(\d+)_(\d+)$', experiment_name)
+    if match:
+        return int(match.group(2))  # global_exp_num is the second-to-last number
+    return None
+
+
 def extract_run_number(experiment_name: str) -> Optional[int]:
     """
     Extract per-config experiment number (run number) from full experiment name.
@@ -72,24 +85,58 @@ def extract_run_number(experiment_name: str) -> Optional[int]:
     return None
 
 
-def load_evaluation_results(experiment_dir: str, head: str) -> Optional[Dict[str, Any]]:
+def load_evaluation_results(experiment_dir: str, head: str, model_type: str = "best") -> Optional[Dict[str, Any]]:
     """
     Load evaluation results from an experiment directory.
     
     Args:
         experiment_dir: Path to experiment directory
         head: "default_head" or "custom_head"
+        model_type: "best" for best model, or "milestone" for milestone model
     
     Returns:
         Evaluation results dictionary or None if file doesn't exist
     """
-    results_path = os.path.join(experiment_dir, head, "evaluation_results.json")
+    if model_type == "best":
+        results_path = os.path.join(experiment_dir, head, "evaluation_results.json")
+    elif model_type == "milestone":
+        # Find milestone results - look for milestone_*_percent in the results
+        head_dir = os.path.join(experiment_dir, head)
+        import glob
+        milestone_pattern = os.path.join(head_dir, "evaluation_results.json")
+        # We'll check if the results file contains milestone data
+        results_path = milestone_pattern
+    else:
+        results_path = os.path.join(experiment_dir, head, "evaluation_results.json")
+    
     if not os.path.exists(results_path):
         return None
     
     try:
         with open(results_path, 'r', encoding='utf-8') as f:
-            return json.load(f)
+            results = json.load(f)
+            
+            # If loading milestone, extract milestone data if available
+            if model_type == "milestone" and "milestone_95_percent" in results:
+                # Return milestone results as primary
+                milestone_data = results["milestone_95_percent"].copy()
+                # Keep common fields
+                milestone_data["experiment"] = results.get("experiment")
+                milestone_data["head"] = results.get("head")
+                milestone_data["test_samples"] = results.get("test_samples")
+                return milestone_data
+            elif model_type == "milestone":
+                # Try to find any milestone data (could be different threshold)
+                for key in results.keys():
+                    if key.startswith("milestone_") and key.endswith("_percent"):
+                        milestone_data = results[key].copy()
+                        milestone_data["experiment"] = results.get("experiment")
+                        milestone_data["head"] = results.get("head")
+                        milestone_data["test_samples"] = results.get("test_samples")
+                        return milestone_data
+                return None
+            
+            return results
     except Exception as e:
         logger.warning(f"Failed to load {results_path}: {e}")
         return None
@@ -271,6 +318,7 @@ def create_aggregation_table(aggregated: Dict[str, Dict[str, List[float]]]) -> p
     Create a pandas DataFrame with aggregated metrics.
     
     Each row is an experiment type, each column is a metric (mean ± std).
+    Handles both best and milestone model metrics.
     """
     # Collect all metric names
     all_metrics = set()
@@ -278,7 +326,8 @@ def create_aggregation_table(aggregated: Dict[str, Dict[str, List[float]]]) -> p
         all_metrics.update(aggregated[exp_name].keys())
     
     # Filter to key metrics for the main table
-    key_metrics = [
+    # Include both best and milestone versions
+    base_key_metrics = [
         'accuracy', 'precision', 'recall', 'f1',
         'avg_latency_ms', 'std_latency_ms',
         'inference_flops_per_sample', 'inference_peak_memory_mb',
@@ -286,9 +335,21 @@ def create_aggregation_table(aggregated: Dict[str, Dict[str, List[float]]]) -> p
         'inference_carbon_footprint_emissions_gco2eq',  # Total inference carbon footprint
     ]
     
-    # Add training metrics if available
-    training_metrics = [m for m in all_metrics if m.startswith('training_')]
-    key_metrics.extend([m for m in training_metrics if 'flops' in m or 'memory' in m])
+    # Build key metrics list - include both best_ and milestone_ prefixed versions
+    key_metrics = []
+    for metric in base_key_metrics:
+        if f"best_{metric}" in all_metrics:
+            key_metrics.append(f"best_{metric}")
+        if f"milestone_{metric}" in all_metrics:
+            key_metrics.append(f"milestone_{metric}")
+        # Also include unprefixed if exists (backward compatibility)
+        if metric in all_metrics and f"best_{metric}" not in all_metrics:
+            key_metrics.append(metric)
+    
+    # Add training metrics if available (both best and milestone)
+    training_metrics = [m for m in all_metrics if 'training_' in m]
+    training_key_metrics = [m for m in training_metrics if 'flops' in m or 'memory' in m]
+    key_metrics.extend(training_key_metrics)
     
     # Add training energy and carbon metrics if available
     key_metrics.append('training_energy_consumption_energy_consumed_kwh')  # Total training energy
@@ -310,10 +371,8 @@ def create_aggregation_table(aggregated: Dict[str, Dict[str, List[float]]]) -> p
                     row[metric] = f"{stats['mean']:.4f} ± {stats['std']:.4f}"
                 else:
                     row[metric] = "N/A"
-            else:
-                row[metric] = "N/A"
-        
-        table_data.append(row)
+            
+            table_data.append(row)
     
     df = pd.DataFrame(table_data)
     return df
@@ -454,6 +513,19 @@ def create_charts(aggregated: Dict[str, Dict[str, List[float]]], output_dir: str
 
 def _format_metric_name(metric: str) -> str:
     """Format metric name for display in charts and tables."""
+    # Handle best_ and milestone_ prefixes
+    is_best = metric.startswith('best_')
+    is_milestone = metric.startswith('milestone_')
+    
+    if is_best:
+        metric = metric[5:]  # Remove 'best_' prefix
+        prefix = "Best "
+    elif is_milestone:
+        metric = metric[11:]  # Remove 'milestone_' prefix
+        prefix = "Milestone "
+    else:
+        prefix = ""
+    
     # Replace underscores with spaces and capitalize
     formatted = metric.replace('_', ' ').title()
     
@@ -470,7 +542,7 @@ def _format_metric_name(metric: str) -> str:
     for old, new in replacements.items():
         formatted = formatted.replace(old, new)
     
-    return formatted
+    return prefix + formatted
 
 
 def save_latex_table(df: pd.DataFrame, output_path: str):
@@ -502,6 +574,8 @@ def run_aggregate_results(output_dir: str = "aggregations",
                        If None, aggregates all global experiments separately.
     """
     logger.info("AGGREGATING EXPERIMENT RESULTS")
+    if global_exp_num is not None:
+        logger.info(f"Filtering to global experiment number: {global_exp_num}")
     logger.info("=" * 100)
     
     # Get experiments directory from config
