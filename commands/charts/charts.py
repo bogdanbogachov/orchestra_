@@ -2,8 +2,8 @@
 Create bar charts comparing F1 scores across aggregations.
 
 This module reads aggregated_metrics.csv files from selected aggregations,
-extracts F1 scores for default, custom attention, custom fft attention, custom last, and custom fft last experiments,
-and creates a bar chart with error bars.
+extracts F1 scores for all experiment configurations,
+and creates bar charts with error bars organized by dataset and noise condition.
 """
 
 import os
@@ -55,16 +55,17 @@ def parse_mean_std(value_str: str) -> Tuple[float, float]:
         return 0.0, 0.0
 
 
-def extract_f1_scores(aggregation_path: str) -> Dict[str, Tuple[float, float]]:
+def extract_all_f1_scores(aggregation_path: str) -> Dict[str, Tuple[float, float]]:
     """
-    Extract F1 scores from an aggregated_metrics.csv file.
+    Extract F1 scores from an aggregated_metrics.csv file for all experiments.
     
     Args:
         aggregation_path: Path to the aggregation directory containing aggregated_metrics.csv
     
     Returns:
-        Dictionary mapping experiment names to (mean, std) tuples for F1 scores.
-        Only includes: default, custom_attention, custom_fft_attention, custom_last, custom_fft_last
+        Dictionary mapping normalized experiment names to (mean, std) tuples for F1 scores.
+        Normalizes experiment names by removing dataset prefix and normalizing FFT variants.
+        Example: {'default': (0.88, 0.01), 'custom_last': (0.90, 0.01), ...}
     """
     csv_path = os.path.join(aggregation_path, "aggregated_metrics.csv")
     
@@ -80,16 +81,7 @@ def extract_f1_scores(aggregation_path: str) -> Dict[str, Tuple[float, float]]:
     
     f1_scores = {}
     
-    # Define the experiment patterns we're looking for
-    target_experiments = {
-        'default': r'.*_default$',
-        'custom_attention': r'.*_custom_attention$',
-        'custom_fft_attention': r'.*_custom_fft_attention$',
-        'custom_last': r'.*_custom_last$',
-        'custom_fft_last': r'.*_custom_fft_last$'
-    }
-    
-    # Iterate through rows and find matching experiments
+    # Iterate through rows and extract all experiments
     for _, row in df.iterrows():
         exp_name = str(row['Experiment']).strip()
         f1_value = str(row.get('f1', ''))
@@ -97,164 +89,236 @@ def extract_f1_scores(aggregation_path: str) -> Dict[str, Tuple[float, float]]:
         if not f1_value or f1_value == 'nan':
             continue
         
-        # Check if this experiment matches any of our targets
-        for exp_type, pattern in target_experiments.items():
-            if re.match(pattern, exp_name):
-                mean, std = parse_mean_std(f1_value)
-                f1_scores[exp_type] = (mean, std)
-                logger.debug(f"Found {exp_type} in {aggregation_path}: F1 = {mean:.4f} ± {std:.4f}")
-                break
+        # Extract the experiment type by removing the dataset prefix
+        # Examples:
+        # - banking77_clean_default -> default
+        # - banking77_noise_custom_last -> custom_last
+        # - clinc150_clean_fft40_custom_fft_attention -> fft_custom_fft_attention
+        # - banking77_noise_fft50_custom_fft_last -> fft_custom_fft_last
+        
+        # Remove dataset prefix (banking77_clean_, banking77_noise_, clinc150_clean_, clinc150_noise_)
+        exp_type = re.sub(r'^(banking77|clinc150)_(clean|noise)_', '', exp_name)
+        
+        # Normalize FFT variants (fft40, fft50 -> fft)
+        exp_type = re.sub(r'fft\d+', 'fft', exp_type)
+        
+        mean, std = parse_mean_std(f1_value)
+        f1_scores[exp_type] = (mean, std)
+        logger.debug(f"Found {exp_type} in {aggregation_path}: F1 = {mean:.4f} ± {std:.4f}")
     
     return f1_scores
 
 
-def create_f1_bar_chart(aggregations_data: Dict[int, Dict[str, Tuple[float, float]]], 
-                        output_dir: str = "charts",
-                        aggregation_names: Optional[Dict[int, str]] = None,
-                        aggregation_order: Optional[List[int]] = None):
+def create_f1_bar_chart_two_groups(group1_data: Dict[str, Tuple[float, float]],
+                                   group1_label: str,
+                                   group2_data: Dict[str, Tuple[float, float]],
+                                   group2_label: str,
+                                   output_path: str,
+                                   figure_title: Optional[str] = None):
     """
-    Create a bar chart comparing F1 scores across aggregations.
+    Create a bar chart with two groups, each containing all experiment configurations.
     
     Args:
-        aggregations_data: Dictionary mapping aggregation numbers to their F1 scores.
-                          Format: {agg_num: {'default': (mean, std), 'custom_attention': (mean, std), 
-                                             'custom_fft_attention': (mean, std), 'custom_last': (mean, std),
-                                             'custom_fft_last': (mean, std)}}
-        output_dir: Directory to save the chart
-        aggregation_names: Optional dictionary mapping aggregation numbers to custom names.
-                          If None, uses default "Aggregation {num}" format.
-        aggregation_order: Optional list specifying the order of aggregations to display.
-                          If None, uses sorted order.
+        group1_data: Dictionary mapping experiment names to (mean, std) tuples for group 1
+        group1_label: Label for group 1 (e.g., "Clean Banking")
+        group2_data: Dictionary mapping experiment names to (mean, std) tuples for group 2
+        group2_label: Label for group 2 (e.g., "Noisy Banking")
+        output_path: Full path to save the chart
+        figure_title: Optional title for the figure
     """
-    os.makedirs(output_dir, exist_ok=True)
+    # Get all unique experiment types from both groups
+    all_exp_types = sorted(set(list(group1_data.keys()) + list(group2_data.keys())))
     
-    # Define experiment types and their display names
-    exp_types = ['default', 'custom_attention', 'custom_fft_attention', 'custom_last', 'custom_fft_last']
-    exp_labels = ['Default', 'Custom Attention', 'Custom FFT Attention', 'Custom Last', 'Custom FFT Last']
-    
-    # Get aggregation numbers in the specified order, or sorted if no order provided
-    if aggregation_order:
-        # Filter to only include aggregations that have data, preserving order
-        agg_nums = [agg_num for agg_num in aggregation_order if agg_num in aggregations_data]
-    else:
-        # Fallback to sorted order if no order specified
-        agg_nums = sorted(aggregations_data.keys())
-    
-    if not agg_nums:
-        logger.error("No aggregation data provided")
+    if not all_exp_types:
+        logger.error("No experiment data provided")
         return
     
+    # Define the order we want for experiment types
+    # This ensures consistent ordering across charts
+    preferred_order = [
+        'default',
+        'custom_attention',
+        'custom_last',
+        'custom_max',
+        'custom_mean',
+        'fft_custom_fft_attention',
+        'fft_custom_fft_last',
+        'fft_custom_fft_max',
+        'fft_custom_fft_mean'
+    ]
+    
+    # Sort: first by preferred order, then alphabetically for any not in preferred order
+    def sort_key(exp_type):
+        if exp_type in preferred_order:
+            return (0, preferred_order.index(exp_type))
+        return (1, exp_type)
+    
+    all_exp_types = sorted(all_exp_types, key=sort_key)
+    
+    # Create display labels for experiment types
+    def format_exp_label(exp_type: str) -> str:
+        """Format experiment type for display."""
+        # Replace underscores with spaces and capitalize
+        label = exp_type.replace('_', ' ').title()
+        # Handle special cases
+        label = label.replace('Fft', 'FFT')
+        label = label.replace('Custom', 'Custom')
+        return label
+    
+    exp_labels = [format_exp_label(exp_type) for exp_type in all_exp_types]
+    
     # Prepare data for plotting
-    num_aggregations = len(agg_nums)
-    num_exp_types = len(exp_types)
-    
-    # Calculate bar positions
-    # Each aggregation has bars (one for each exp type) with no space between them
-    # Space between different aggregations
+    num_exp_types = len(all_exp_types)
     bar_width = 0.8  # Width of each bar
-    group_width = num_exp_types * bar_width  # Total width of one aggregation group
-    group_spacing = 1.0  # Space between aggregation groups
+    group_spacing = 1.0  # Space between the two groups
     
-    # Calculate x positions for each bar
-    x_positions = []
-    group_centers = []
+    # Calculate x positions
+    # Group 1: All bars grouped together (no space between bars within group)
+    # Group 2: All bars grouped together (no space between bars within group)
+    # Space between the two groups
     
-    for i, agg_num in enumerate(agg_nums):
-        group_start = i * (group_width + group_spacing)
-        group_center = group_start + group_width / 2
-        group_centers.append(group_center)
+    group1_width = num_exp_types * bar_width  # Total width of group 1
+    group1_start = 0
+    group2_start = group1_start + group1_width + group_spacing
+    
+    x_positions_group1 = []
+    x_positions_group2 = []
+    
+    for i, exp_type in enumerate(all_exp_types):
+        # Position bars within group 1 (no space between them)
+        x1 = group1_start + i * bar_width + bar_width / 2
+        x_positions_group1.append((exp_type, x1))
         
-        # Position bars within this group (no space between them)
-        for j, exp_type in enumerate(exp_types):
-            x_pos = group_start + j * bar_width + bar_width / 2
-            x_positions.append((agg_num, exp_type, x_pos))
+        # Position bars within group 2 (no space between them)
+        x2 = group2_start + i * bar_width + bar_width / 2
+        x_positions_group2.append((exp_type, x2))
+    
+    # Calculate group centers for x-axis labels
+    group1_center = group1_start + group1_width / 2
+    group2_center = group2_start + group1_width / 2
     
     # Extract means and stds
-    means = []
-    stds = []
-    bar_labels = []
+    means_group1 = []
+    stds_group1 = []
+    means_group2 = []
+    stds_group2 = []
     
-    for agg_num in agg_nums:
-        for exp_type in exp_types:
-            if exp_type in aggregations_data[agg_num]:
-                mean, std = aggregations_data[agg_num][exp_type]
-                means.append(mean)
-                stds.append(std)
-            else:
-                means.append(0.0)
-                stds.append(0.0)
-            bar_labels.append(f"{exp_type}")
+    for exp_type in all_exp_types:
+        if exp_type in group1_data:
+            mean, std = group1_data[exp_type]
+            means_group1.append(mean)
+            stds_group1.append(std)
+        else:
+            means_group1.append(0.0)
+            stds_group1.append(0.0)
+        
+        if exp_type in group2_data:
+            mean, std = group2_data[exp_type]
+            means_group2.append(mean)
+            stds_group2.append(std)
+        else:
+            means_group2.append(0.0)
+            stds_group2.append(0.0)
     
     # Create the figure
-    fig, ax = plt.subplots(figsize=(max(12, num_aggregations * 2.5), 7))
+    # Calculate width needed: 2 groups with bars + spacing
+    total_width = group1_width + group_spacing + group1_width
+    fig_width = max(14, total_width * 0.5)
+    fig, ax = plt.subplots(figsize=(fig_width, 7))
     
-    # Define colors for each aggregation (one color per aggregation)
-    colors = plt.cm.tab10(np.linspace(0, 1, num_aggregations))
-    color_map = {agg_num: colors[i] for i, agg_num in enumerate(agg_nums)}
+    # Define colors - use different colors for each group
+    color_group1 = '#2E86AB'  # Blue
+    color_group2 = '#A23B72'  # Purple
     
-    # Define hatch patterns for each experiment type
-    hatches = ['', '///', '...', 'xxx', '+++']  # No hatch, diagonal lines, dots, crosshatch, plus
+    # Define hatch patterns for different experiment types (9 unique patterns)
+    # Using dense patterns for better visibility
+    # The last pattern (fft_custom_fft_mean) will use filled squares effect
+    hatches = [
+        '',           # 1. No hatch (solid) - default
+        '///',        # 2. Forward diagonal lines (dense) - custom_attention
+        '\\\\\\',     # 3. Backward diagonal lines (dense) - custom_last
+        '|||',        # 4. Vertical lines (dense) - custom_max
+        '---',        # 5. Horizontal lines (dense) - custom_mean
+        '+++',        # 6. Plus signs (dense) - fft_custom_fft_attention
+        'xxx',        # 7. Crosshatch (dense) - fft_custom_fft_last
+        '...',        # 8. Dots (dense) - fft_custom_fft_max
+        'ooo'         # 9. Filled squares effect (dense circles) - fft_custom_fft_mean
+    ]
     
-    # Plot bars
-    bars = []
+    # Ensure we have exactly the right number of patterns
+    if len(all_exp_types) <= len(hatches):
+        # Use only the first N patterns where N = number of experiment types
+        hatches = hatches[:len(all_exp_types)]
+    else:
+        # If somehow we have more than 9, extend with variations
+        while len(hatches) < len(all_exp_types):
+            hatches.append(hatches[len(hatches) % 9])
     
-    for i, (agg_num, exp_type, x_pos) in enumerate(x_positions):
-        color = color_map[agg_num]
-        hatch_idx = exp_types.index(exp_type)
+    # Plot bars for group 1
+    bars1 = []
+    for i, (exp_type, x_pos) in enumerate(x_positions_group1):
+        hatch_idx = i % len(hatches)
         hatch = hatches[hatch_idx]
-        
-        bar = ax.bar(x_pos, means[i], width=bar_width, yerr=stds[i],
-                    color=color, hatch=hatch, edgecolor='black', linewidth=1,
-                    error_kw={'elinewidth': 1.5, 'capsize': 5, 'capthick': 1.5})
-        bars.append(bar)
+        bar = ax.bar(x_pos, means_group1[i], width=bar_width, yerr=stds_group1[i],
+                    color=color_group1, hatch=hatch, edgecolor='black', linewidth=1,
+                    alpha=0.8, error_kw={'elinewidth': 1.5, 'capsize': 5, 'capthick': 1.5})
+        bars1.append(bar)
+    
+    # Plot bars for group 2
+    bars2 = []
+    for i, (exp_type, x_pos) in enumerate(x_positions_group2):
+        hatch_idx = i % len(hatches)
+        hatch = hatches[hatch_idx]
+        bar = ax.bar(x_pos, means_group2[i], width=bar_width, yerr=stds_group2[i],
+                    color=color_group2, hatch=hatch, edgecolor='black', linewidth=1,
+                    alpha=0.8, error_kw={'elinewidth': 1.5, 'capsize': 5, 'capthick': 1.5})
+        bars2.append(bar)
     
     # Create legend entries
     legend_handles = []
     
+    # Add group labels
+    legend_handles.append(plt.Rectangle((0, 0), 1, 1, 
+        facecolor=color_group1, edgecolor='black', alpha=0.8, label=group1_label))
+    legend_handles.append(plt.Rectangle((0, 0), 1, 1, 
+        facecolor=color_group2, edgecolor='black', alpha=0.8, label=group2_label))
+    
     # Add experiment type entries (with hatch patterns)
-    for exp_label, hatch_pattern in zip(exp_labels, hatches):
+    for exp_label, hatch_pattern in zip(exp_labels, hatches[:len(exp_labels)]):
         legend_handles.append(plt.Rectangle((0, 0), 1, 1, 
             facecolor='white', edgecolor='black', hatch=hatch_pattern,
             label=exp_label))
     
-    # Add aggregation entries (with colors)
-    for agg_num, color in color_map.items():
-        if aggregation_names and agg_num in aggregation_names:
-            label = aggregation_names[agg_num]
-        else:
-            label = f'Aggregation {agg_num}'
-        legend_handles.append(plt.Rectangle((0, 0), 1, 1, 
-            facecolor=color, edgecolor='black', label=label))
-    
-    # Set x-axis labels
-    ax.set_xticks(group_centers)
-    if aggregation_names:
-        ax.set_xticklabels([aggregation_names.get(agg_num, f'Agg {agg_num}') for agg_num in agg_nums])
-    else:
-        ax.set_xticklabels([f'Agg {agg_num}' for agg_num in agg_nums])
+    # Set x-axis labels (group labels at group centers)
+    ax.set_xticks([group1_center, group2_center])
+    ax.set_xticklabels([group1_label, group2_label])
     
     # Set labels
-    ax.set_xlabel('Aggregation', fontweight='bold')
+    ax.set_xlabel('Dataset Condition', fontweight='bold')
     ax.set_ylabel('F1 Score', fontweight='bold')
+    
+    # Don't set title (removed per user request)
     
     # Add grid
     ax.grid(True, alpha=0.3, axis='y')
     ax.set_axisbelow(True)
     
     # Set y-axis to start from a reasonable minimum
-    if means:
-        y_min = max(0, min(means) - max(stds) - 0.05)
-        y_max = max(means) + max(stds) + 0.05
+    all_means = means_group1 + means_group2
+    all_stds = stds_group1 + stds_group2
+    if all_means:
+        y_min = max(0, min(all_means) - max(all_stds) - 0.05)
+        y_max = max(all_means) + max(all_stds) + 0.05
         ax.set_ylim(y_min, y_max)
     
     # Add legend
-    ax.legend(handles=legend_handles, loc='best', framealpha=0.9)
+    ax.legend(handles=legend_handles, loc='best', framealpha=0.9, ncol=2)
     
     # Adjust layout
     plt.tight_layout()
     
     # Save the chart
-    output_path = os.path.join(output_dir, 'f1_scores_comparison.png')
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
     plt.savefig(output_path, dpi=200, bbox_inches='tight')
     logger.info(f"Saved F1 scores chart: {output_path}")
     
@@ -266,32 +330,32 @@ def run_charts(aggregation_nums: List[int], aggregations_dir: str = "aggregation
     """
     Main function to create F1 score comparison charts.
     
+    Creates two separate figures:
+    1. Banking dataset: Clean Banking vs Noisy Banking (all 9 configurations)
+    2. CLINC dataset: Clean CLINC vs Noisy CLINC (all 9 configurations)
+    
     Args:
-        aggregation_nums: List of aggregation numbers to include in the chart
+        aggregation_nums: List of aggregation numbers to include in the charts
+                         Expected: [62, 63, 66, 67] for banking_noise, banking_clean, clinc_clean, clinc_noise
         aggregations_dir: Base directory containing aggregation folders
         output_dir: Directory to save the charts
-        aggregation_names: Optional list of custom names for aggregations (must match length of aggregation_nums)
+        aggregation_names: Optional list of custom names (not used in new format, kept for compatibility)
     """
-    logger.info("CREATING F1 SCORES COMPARISON CHART")
+    logger.info("CREATING F1 SCORES COMPARISON CHARTS")
     logger.info("=" * 100)
     
     if not aggregation_nums:
         logger.error("No aggregation numbers provided")
         return
     
-    # Validate aggregation names if provided
-    if aggregation_names is not None:
-        if len(aggregation_names) != len(aggregation_nums):
-            logger.error(f"Number of aggregation names ({len(aggregation_names)}) must match number of aggregation numbers ({len(aggregation_nums)})")
-            return
-        # Create mapping from aggregation number to name
-        name_map = {agg_num: name for agg_num, name in zip(aggregation_nums, aggregation_names)}
-    else:
-        name_map = None
+    # Expected aggregation numbers:
+    # 62: banking77_noise (noisy banking)
+    # 63: banking77_clean (clean banking)
+    # 66: clinc150_clean (clean clinc)
+    # 67: clinc150_noise (noisy clinc)
     
-    # Collect F1 scores from each aggregation, preserving order
+    # Collect F1 scores from each aggregation
     aggregations_data = {}
-    valid_aggregation_order = []  # Track order of successfully loaded aggregations
     
     for agg_num in aggregation_nums:
         agg_path = os.path.join(aggregations_dir, str(agg_num))
@@ -300,30 +364,54 @@ def run_charts(aggregation_nums: List[int], aggregations_dir: str = "aggregation
             logger.warning(f"Aggregation directory not found: {agg_path}")
             continue
         
-        f1_scores = extract_f1_scores(agg_path)
+        f1_scores = extract_all_f1_scores(agg_path)
         
         if not f1_scores:
             logger.warning(f"No F1 scores found in aggregation {agg_num}, skipping...")
             continue
         
-        # Check if we have at least one of the required experiment types
-        required_types = ['default', 'custom_attention', 'custom_fft_attention', 'custom_last', 'custom_fft_last']
-        if not any(exp_type in f1_scores for exp_type in required_types):
-            logger.warning(f"None of the required experiment types found in aggregation {agg_num}, skipping...")
-            continue
-        
         aggregations_data[agg_num] = f1_scores
-        valid_aggregation_order.append(agg_num)  # Add to order list
-        logger.info(f"Loaded F1 scores from aggregation {agg_num}: {f1_scores}")
+        logger.info(f"Loaded F1 scores from aggregation {agg_num}: {len(f1_scores)} experiments")
     
     if not aggregations_data:
         logger.error("No valid aggregation data found")
         return
     
-    # Create the chart
-    logger.info(f"\nCreating F1 scores comparison chart...")
-    create_f1_bar_chart(aggregations_data, output_dir, aggregation_names=name_map, 
-                       aggregation_order=valid_aggregation_order)
+    # Create Figure 1: BANKING77 dataset
+    # Group 1: Clean BANKING77 (agg 63)
+    # Group 2: Noisy BANKING77 (agg 62)
+    if 63 in aggregations_data and 62 in aggregations_data:
+        logger.info("\nCreating Figure 1: BANKING77 Dataset (Clean vs Noisy)...")
+        output_path_fig1 = os.path.join(output_dir, 'f1_scores_banking.png')
+        create_f1_bar_chart_two_groups(
+            group1_data=aggregations_data[63],
+            group1_label="Clean BANKING77",
+            group2_data=aggregations_data[62],
+            group2_label="Noisy BANKING77",
+            output_path=output_path_fig1,
+            figure_title=None
+        )
+        logger.info(f"✓ Figure 1 saved: {output_path_fig1}")
+    else:
+        logger.warning("Missing aggregation data for BANKING77 dataset (need 62 and 63)")
+    
+    # Create Figure 2: CLINC150 dataset
+    # Group 1: Clean CLINC150 (agg 66)
+    # Group 2: Noisy CLINC150 (agg 67)
+    if 66 in aggregations_data and 67 in aggregations_data:
+        logger.info("\nCreating Figure 2: CLINC150 Dataset (Clean vs Noisy)...")
+        output_path_fig2 = os.path.join(output_dir, 'f1_scores_clinc.png')
+        create_f1_bar_chart_two_groups(
+            group1_data=aggregations_data[66],
+            group1_label="Clean CLINC150",
+            group2_data=aggregations_data[67],
+            group2_label="Noisy CLINC150",
+            output_path=output_path_fig2,
+            figure_title=None
+        )
+        logger.info(f"✓ Figure 2 saved: {output_path_fig2}")
+    else:
+        logger.warning("Missing aggregation data for CLINC150 dataset (need 66 and 67)")
     
     logger.info(f"\n✓ Chart creation complete! Results saved to {output_dir}")
     logger.info("=" * 100)
