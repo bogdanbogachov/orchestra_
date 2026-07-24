@@ -134,17 +134,17 @@ def create_f1_bar_chart_two_groups(group1_data: Dict[str, Tuple[float, float]],
         return
     
     # Define the order we want for experiment types
-    # This ensures consistent ordering across charts
+    # Order matches table: C_0 (default), C_1-C_4 (custom without FFT), C_5-C_8 (custom with FFT)
     preferred_order = [
-        'default',
-        'custom_attention',
-        'custom_last',
-        'custom_max',
-        'custom_mean',
-        'fft_custom_fft_attention',
-        'fft_custom_fft_last',
-        'fft_custom_fft_max',
-        'fft_custom_fft_mean'
+        'default',                    # C_0: Baseline
+        'custom_mean',                # C_1: Mean
+        'custom_max',                 # C_2: Max
+        'custom_last',                # C_3: Last-token
+        'custom_attention',           # C_4: Attention
+        'fft_custom_fft_mean',        # C_5: FFT + Mean
+        'fft_custom_fft_max',         # C_6: FFT + Max
+        'fft_custom_fft_last',        # C_7: FFT + Last-token
+        'fft_custom_fft_attention'    # C_8: FFT + Attention
     ]
     
     # Sort: first by preferred order, then alphabetically for any not in preferred order
@@ -254,22 +254,28 @@ def create_f1_bar_chart_two_groups(group1_data: Dict[str, Tuple[float, float]],
         while len(hatches) < len(all_exp_types):
             hatches.append(hatches[len(hatches) % 9])
     
-    # Plot bars for group 1
+    # Plot bars for group 1 (convert F1 scores from 0-1 to 0-100)
     bars1 = []
     for i, (exp_type, x_pos) in enumerate(x_positions_group1):
         hatch_idx = i % len(hatches)
         hatch = hatches[hatch_idx]
-        bar = ax.bar(x_pos, means_group1[i], width=bar_width, yerr=stds_group1[i],
+        # Convert to percentage (0-1 -> 0-100)
+        mean_percent = means_group1[i] * 100
+        std_percent = stds_group1[i] * 100
+        bar = ax.bar(x_pos, mean_percent, width=bar_width, yerr=std_percent,
                     color=color_group1, hatch=hatch, edgecolor='black', linewidth=1,
                     alpha=0.8, error_kw={'elinewidth': 1.5, 'capsize': 5, 'capthick': 1.5})
         bars1.append(bar)
     
-    # Plot bars for group 2
+    # Plot bars for group 2 (convert F1 scores from 0-1 to 0-100)
     bars2 = []
     for i, (exp_type, x_pos) in enumerate(x_positions_group2):
         hatch_idx = i % len(hatches)
         hatch = hatches[hatch_idx]
-        bar = ax.bar(x_pos, means_group2[i], width=bar_width, yerr=stds_group2[i],
+        # Convert to percentage (0-1 -> 0-100)
+        mean_percent = means_group2[i] * 100
+        std_percent = stds_group2[i] * 100
+        bar = ax.bar(x_pos, mean_percent, width=bar_width, yerr=std_percent,
                     color=color_group2, hatch=hatch, edgecolor='black', linewidth=1,
                     alpha=0.8, error_kw={'elinewidth': 1.5, 'capsize': 5, 'capthick': 1.5})
         bars2.append(bar)
@@ -295,7 +301,7 @@ def create_f1_bar_chart_two_groups(group1_data: Dict[str, Tuple[float, float]],
     
     # Set labels
     ax.set_xlabel('Dataset Condition', fontweight='bold')
-    ax.set_ylabel('F1 Score', fontweight='bold')
+    ax.set_ylabel('F1 Score (%)', fontweight='bold')
     
     # Don't set title (removed per user request)
     
@@ -303,12 +309,15 @@ def create_f1_bar_chart_two_groups(group1_data: Dict[str, Tuple[float, float]],
     ax.grid(True, alpha=0.3, axis='y')
     ax.set_axisbelow(True)
     
-    # Set y-axis to start from a reasonable minimum
+    # Set y-axis to start from a reasonable minimum (convert to percentage scale)
     all_means = means_group1 + means_group2
     all_stds = stds_group1 + stds_group2
     if all_means:
-        y_min = max(0, min(all_means) - max(all_stds) - 0.05)
-        y_max = max(all_means) + max(all_stds) + 0.05
+        # Convert to percentages
+        all_means_percent = [m * 100 for m in all_means]
+        all_stds_percent = [s * 100 for s in all_stds]
+        y_min = max(0, min(all_means_percent) - max(all_stds_percent) - 5)
+        y_max = min(100, max(all_means_percent) + max(all_stds_percent) + 5)
         ax.set_ylim(y_min, y_max)
     
     # Add legend
