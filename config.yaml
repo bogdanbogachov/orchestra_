@@ -8,7 +8,7 @@ model:
   pooling_strategy: "mean"
   use_fft: true
 
-  num_labels: 151
+  num_labels: 24
   pad_token: "<|reserved_special_token_15|>"
   torch_dtype: "float32"
   device_map: "auto"
@@ -18,8 +18,8 @@ paths:
   experiments: "experiments"
   data:
     training: "training_data.json"
-    train: "train_data.json"
-    test: "test_data.json"
+    train: "additional_data/additional_train.json"
+    test: "additional_data/additional_test.json"
 
 lora:
   r: 4
