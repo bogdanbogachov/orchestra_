@@ -27,10 +27,17 @@ def resolve_output_dirs(
     experiment_name: str,
     use_custom_head: bool,
 ) -> Tuple[str, str, str, Optional[int]]:
-    global_exp_num = extract_global_experiment_number(experiment_name)
+    match = re.match(r"^(.+)_(\d+)_(\d+)$", experiment_name)
+    global_exp_num = int(match.group(2)) if match else extract_global_experiment_number(experiment_name)
     if global_exp_num is not None:
-        output_base = os.path.join(experiments_dir, str(global_exp_num), experiment_name)
-        logger.info(f"Using nested directory structure: experiments/{global_exp_num}/{experiment_name}")
+        if match:
+            base_name = match.group(1)
+            per_config_exp_num = match.group(3)
+            run_dir_name = f"{base_name}_{per_config_exp_num}"
+        else:
+            run_dir_name = experiment_name
+        output_base = os.path.join(experiments_dir, str(global_exp_num), run_dir_name)
+        logger.info(f"Using nested directory structure: experiments/{global_exp_num}/{run_dir_name}")
     else:
         output_base = os.path.join(experiments_dir, experiment_name)
         logger.warning(f"Could not extract global experiment number from '{experiment_name}', using flat structure")
@@ -63,7 +70,12 @@ def verify_output_dir(
         return
 
     actual_path = os.path.abspath(output_dir)
-    expected_components = [experiments_dir, str(global_exp_num), experiment_name, head_type]
+    match = re.match(r"^(.+)_(\d+)_(\d+)$", experiment_name)
+    if match:
+        run_dir_name = f"{match.group(1)}_{match.group(3)}"
+    else:
+        run_dir_name = experiment_name
+    expected_components = [experiments_dir, str(global_exp_num), run_dir_name, head_type]
     expected_path = os.path.abspath(os.path.join(*expected_components))
     if actual_path != expected_path:
         logger.error(f"Path mismatch! Actual: {actual_path}, Expected: {expected_path}")
