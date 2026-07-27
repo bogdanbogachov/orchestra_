@@ -9,7 +9,8 @@ from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
 from config import CONFIG
 from logger_config import logger
-from commands.utils.metrics import get_memory_usage, reset_memory_tracking, calculate_flops_for_transformer, EnergyTracker
+from commands.utils.metrics import get_memory_usage, reset_memory_tracking, calculate_flops_for_transformer, \
+    EnergyTracker
 
 
 def _resolve_default_adapter_path(adapter_path: Optional[str]) -> str:
@@ -17,7 +18,7 @@ def _resolve_default_adapter_path(adapter_path: Optional[str]) -> str:
         return adapter_path
     paths_config = CONFIG["paths"]
     experiment_name = CONFIG.get("experiment", "orchestra")
-    
+
     # Extract global_exp_num and restructure path
     import re
     match = re.match(r'^(.+)_(\d+)_(\d+)$', experiment_name)
@@ -66,11 +67,11 @@ def _load_default_model_and_tokenizer(adapter_path: Optional[str] = None):
 
 
 def _predict_default_single(
-    model,
-    tokenizer,
-    input_text: str,
-    labels=None,
-    max_length: int = 512,
+        model,
+        tokenizer,
+        input_text: str,
+        labels=None,
+        max_length: int = 512,
 ) -> Dict[str, Any]:
     inputs = tokenizer(
         input_text,
@@ -91,10 +92,10 @@ def _predict_default_single(
 
 
 def run_infer_default(
-    input_text_or_json: Optional[Union[str, os.PathLike]] = None,
-    labels=None,
-    adapter_path: Optional[str] = None,
-    output_path: Optional[str] = None,
+        input_text_or_json: Optional[Union[str, os.PathLike]] = None,
+        labels=None,
+        adapter_path: Optional[str] = None,
+        output_path: Optional[str] = None,
 ) -> Union[Dict[str, Any], Dict[str, Any]]:
     """
     If input is a string text -> returns single-item output dict.
@@ -107,7 +108,8 @@ def run_infer_default(
     max_length = training_config.get("max_length", 512)
 
     # Dataset mode
-    if input_text_or_json is None or (isinstance(input_text_or_json, (str, os.PathLike)) and os.path.exists(str(input_text_or_json))):
+    if input_text_or_json is None or (
+            isinstance(input_text_or_json, (str, os.PathLike)) and os.path.exists(str(input_text_or_json))):
         paths_config = CONFIG["paths"]
         experiment_name = CONFIG.get("experiment", "orchestra")
         test_path = str(input_text_or_json) if input_text_or_json is not None else paths_config["data"]["test"]
@@ -121,7 +123,7 @@ def run_infer_default(
 
         results: List[Dict[str, Any]] = []
         logger.info(f"Running default-head inference on dataset: {test_path} ({len(data)} samples)")
-        
+
         # Initialize energy tracker for Green AI metrics
         output_dir = os.path.dirname(output_path)
         energy_tracker = None
@@ -135,13 +137,13 @@ def run_infer_default(
             logger.info("✓ Started energy tracking for inference")
         except Exception as e:
             logger.warning(f"Could not initialize energy tracker: {e}")
-        
+
         # Reset memory tracking and calculate FLOPs on first sample
         device = next(model.parameters()).device
         reset_memory_tracking(device)
         flops_per_sample = 0
         peak_memory_mb = 0.0
-        
+
         for i, item in enumerate(data):
             text = item["text"]
             true_label = item.get("label")
@@ -150,7 +152,7 @@ def run_infer_default(
             latency_ms = (time.time() - start) * 1000.0
             probs = out["probs"].squeeze(0).detach().cpu().tolist()
             pred = int(int(torch.tensor(probs).argmax().item()))
-            
+
             # Calculate FLOPs on first sample using standard industry approach (thop)
             if i == 0:
                 try:
@@ -169,7 +171,7 @@ def run_infer_default(
                 except Exception as e:
                     logger.warning(f"  Could not calculate FLOPs: {e}")
                     flops_per_sample = 0
-            
+
             # Track peak memory usage
             memory_info = get_memory_usage(device)
             if device.type == 'cuda' and torch.cuda.is_available():
@@ -177,7 +179,7 @@ def run_infer_default(
             else:
                 current_peak = memory_info.get('cpu_rss_mb', 0.0)
             peak_memory_mb = max(peak_memory_mb, current_peak)
-            
+
             results.append(
                 {
                     "text": text,
@@ -192,7 +194,7 @@ def run_infer_default(
 
         # Get final memory stats
         final_memory_info = get_memory_usage(device)
-        
+
         # Stop energy tracking and get metrics
         energy_metrics = {}
         if energy_tracker is not None:
@@ -201,12 +203,12 @@ def run_infer_default(
                 logger.info("✓ Stopped energy tracking")
             except Exception as e:
                 logger.warning(f"Error stopping energy tracker: {e}")
-        
+
         # Calculate total FLOPs for entire inference run
         total_flops = int(flops_per_sample * len(results)) if flops_per_sample > 0 else 0
         if total_flops > 0:
             logger.info(f"  Total inference FLOPs: {total_flops:,} (for {len(results)} samples)")
-        
+
         payload = {
             "experiment": experiment_name,
             "head": "default_head",
@@ -221,7 +223,7 @@ def run_infer_default(
                 "memory_info": {k: float(v) for k, v in final_memory_info.items()},
             },
         }
-        
+
         # Add energy and carbon metrics (Green AI metrics)
         if energy_metrics:
             payload["metrics"]["energy_consumption"] = {
@@ -237,7 +239,7 @@ def run_infer_default(
                 "country_name": energy_metrics.get("country_name", "unknown"),
                 "region": energy_metrics.get("region", "unknown"),
             }
-            
+
             energy_kwh = energy_metrics.get("energy_consumed_kwh", 0.0)
             emissions = energy_metrics.get("emissions_gco2eq", 0.0)
             if energy_kwh > 0:

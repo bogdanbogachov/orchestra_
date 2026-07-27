@@ -8,6 +8,7 @@ from sklearn.metrics import accuracy_score, precision_recall_fscore_support
 from config import CONFIG
 from logger_config import logger
 
+
 def load_test_data() -> Tuple[List[str], List[int]]:
     paths_config = CONFIG["paths"]
     test_file = paths_config["data"]["test"]
@@ -19,12 +20,14 @@ def load_test_data() -> Tuple[List[str], List[int]]:
     labels = [int(item["label"]) for item in data]
     return texts, labels
 
+
 def _load_predictions(predictions_path: str) -> Dict[str, Any]:
     with open(predictions_path, "r", encoding="utf-8") as f:
         return json.load(f)
 
 
-def _compute_metrics(y_true: np.ndarray, y_pred: np.ndarray, latencies_ms: Optional[List[float]] = None) -> Dict[str, Any]:
+def _compute_metrics(y_true: np.ndarray, y_pred: np.ndarray, latencies_ms: Optional[List[float]] = None) -> Dict[
+    str, Any]:
     accuracy = accuracy_score(y_true, y_pred)
     precision, recall, f1, _ = precision_recall_fscore_support(
         y_true, y_pred, average="weighted", zero_division=0
@@ -41,10 +44,11 @@ def _compute_metrics(y_true: np.ndarray, y_pred: np.ndarray, latencies_ms: Optio
         out["std_latency_ms"] = float(lat.std())
     return out
 
+
 def extract_global_experiment_number(experiment_name: str) -> Optional[int]:
     """
     Extract global experiment number from experiment name.
-    
+
     Format: base_name_global_exp_num_per_config_exp_num
     Example: "35_l_default_8_1" -> 8
     Example: "35_L_custom_last_8_1" -> 8
@@ -55,7 +59,7 @@ def extract_global_experiment_number(experiment_name: str) -> Optional[int]:
     match = re.match(r'^(.+)_(\d+)_(\d+)$', experiment_name)
     if match:
         return int(match.group(2))  # global_exp_num is the second-to-last number
-    
+
     # Try alternative pattern in case format is slightly different
     # Look for pattern: ..._number_number at the end
     parts = experiment_name.split('_')
@@ -68,17 +72,17 @@ def extract_global_experiment_number(experiment_name: str) -> Optional[int]:
             return second_last_num
         except (ValueError, IndexError):
             pass
-    
+
     return None
 
 
 def run_evaluation(head: Optional[str] = None):
     logger.info("Starting evaluation pipeline...")
-    
+
     paths_config = CONFIG["paths"]
     experiment_name = CONFIG.get("experiment", "orchestra")
     experiments_dir = paths_config["experiments"]
-    
+
     # Extract global_exp_num and restructure path
     import re
     match = re.match(r'^(.+)_(\d+)_(\d+)$', experiment_name)
@@ -91,7 +95,7 @@ def run_evaluation(head: Optional[str] = None):
     else:
         # Fallback for non-standard experiment names
         experiment_dir = os.path.join(experiments_dir, experiment_name)
-    
+
     os.makedirs(experiment_dir, exist_ok=True)
 
     _, labels = load_test_data()
@@ -120,18 +124,18 @@ def run_evaluation(head: Optional[str] = None):
     # Evaluate best model and milestone model if available
     head_dir = os.path.join(experiment_dir, chosen_head)
     best_pred_path = os.path.join(head_dir, "test_predictions_best.json")
-    
+
     # Find milestone prediction file dynamically (e.g., test_predictions_95percent.json)
     import glob
     milestone_pattern = os.path.join(head_dir, "test_predictions_*percent.json")
     milestone_files = glob.glob(milestone_pattern)
     milestone_pred_path = milestone_files[0] if milestone_files else None
-    
+
     # Fallback to default prediction file if best doesn't exist
     default_pred_path_for_head = default_pred_path if chosen_head == "default_head" else custom_pred_path
     if not os.path.exists(best_pred_path):
         best_pred_path = default_pred_path_for_head
-    
+
     if not os.path.exists(best_pred_path):
         raise FileNotFoundError(f"Missing predictions for {chosen_head}: {best_pred_path}. Run inference first.")
 
@@ -147,9 +151,10 @@ def run_evaluation(head: Optional[str] = None):
     lat_best = [float(x.get("latency_ms", 0.0)) for x in payload_best["predictions"]]
     lat_for_stats_best = lat_best[1:] if len(lat_best) > 1 else lat_best
     if len(lat_best) > 1:
-        logger.info(f"  Excluding first prediction from latency stats (warmup: {lat_best[0]:.2f} ms, using {len(lat_for_stats_best)} samples)")
+        logger.info(
+            f"  Excluding first prediction from latency stats (warmup: {lat_best[0]:.2f} ms, using {len(lat_for_stats_best)} samples)")
     head_metrics_best = _compute_metrics(y_true, preds_best, lat_for_stats_best)
-    
+
     # Evaluate milestone model if available
     head_metrics_milestone = None
     payload_milestone = None
@@ -164,18 +169,20 @@ def run_evaluation(head: Optional[str] = None):
         payload_milestone = _load_predictions(milestone_pred_path)
         preds_milestone = np.asarray([int(x["pred"]) for x in payload_milestone["predictions"]], dtype=np.int64)
         if len(preds_milestone) != len(y_true):
-            logger.warning(f"Prediction/label length mismatch for {chosen_head} ({threshold_percent}%): y_true={len(y_true)}, preds={len(preds_milestone)}")
+            logger.warning(
+                f"Prediction/label length mismatch for {chosen_head} ({threshold_percent}%): y_true={len(y_true)}, preds={len(preds_milestone)}")
         else:
             lat_milestone = [float(x.get("latency_ms", 0.0)) for x in payload_milestone["predictions"]]
             lat_for_stats_milestone = lat_milestone[1:] if len(lat_milestone) > 1 else lat_milestone
             if len(lat_milestone) > 1:
-                logger.info(f"  Excluding first prediction from latency stats (warmup: {lat_milestone[0]:.2f} ms, using {len(lat_for_stats_milestone)} samples)")
+                logger.info(
+                    f"  Excluding first prediction from latency stats (warmup: {lat_milestone[0]:.2f} ms, using {len(lat_for_stats_milestone)} samples)")
             head_metrics_milestone = _compute_metrics(y_true, preds_milestone, lat_for_stats_milestone)
-    
+
     # Use best model metrics as primary
     head_metrics = head_metrics_best
     payload = payload_best
-    
+
     # Extract FLOPs and memory metrics from predictions payload (inference metrics)
     metrics = payload.get("metrics", {})
     inference_flops_per_sample = metrics.get("flops_per_sample", 0)
@@ -184,7 +191,7 @@ def run_evaluation(head: Optional[str] = None):
     inference_memory_info = metrics.get("memory_info", {})
     inference_energy_consumption = metrics.get("energy_consumption", {})
     inference_carbon_footprint = metrics.get("carbon_footprint", {})
-    
+
     # Try to load training metrics if available
     training_metrics_path = os.path.join(experiment_dir, chosen_head, "training_metrics.json")
     training_metrics = {}
@@ -214,7 +221,7 @@ def run_evaluation(head: Optional[str] = None):
         head_results["inference_metrics"]["energy_consumption"] = inference_energy_consumption
     if inference_carbon_footprint:
         head_results["inference_metrics"]["carbon_footprint"] = inference_carbon_footprint
-    
+
     # Add training metrics if available
     if training_metrics:
         head_results["training_metrics"] = {
@@ -230,7 +237,7 @@ def run_evaluation(head: Optional[str] = None):
             "calculation_method": training_metrics.get("calculation_method", "standard_industry_approach"),
             "backward_multiplier": training_metrics.get("backward_multiplier", 2.0),
         }
-        
+
         # Add training energy and carbon metrics if available (Green AI metrics)
         if "energy_consumption" in training_metrics:
             head_results["training_metrics"]["energy_consumption"] = training_metrics["energy_consumption"]

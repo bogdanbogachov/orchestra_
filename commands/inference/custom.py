@@ -18,7 +18,7 @@ def _resolve_custom_adapter_path(adapter_path: Optional[str]) -> str:
         return adapter_path
     paths_config = CONFIG["paths"]
     experiment_name = CONFIG.get("experiment", "orchestra")
-    
+
     # Extract global_exp_num and restructure path
     import re
     match = re.match(r'^(.+)_(\d+)_(\d+)$', experiment_name)
@@ -73,7 +73,7 @@ def _load_custom_model_tokenizer_and_head(adapter_path: Optional[str] = None):
                 pooling_strategy=pooling_strategy,
                 use_fft=use_fft,
             ).to(base_model.device)
-            
+
             # Check for missing/unexpected keys when loading
             result = classifier.load_state_dict(classifier_state, strict=False)
             if result.missing_keys:
@@ -81,7 +81,7 @@ def _load_custom_model_tokenizer_and_head(adapter_path: Optional[str] = None):
                 logger.warning("⚠️ Some classifier weights were NOT loaded - this may cause poor performance!")
             if result.unexpected_keys:
                 logger.warning(f"⚠️ Unexpected keys in classifier checkpoint: {result.unexpected_keys}")
-            
+
             if not result.missing_keys and not result.unexpected_keys:
                 logger.info("✓ Successfully loaded all classifier weights")
             else:
@@ -89,17 +89,16 @@ def _load_custom_model_tokenizer_and_head(adapter_path: Optional[str] = None):
         else:
             logger.info("Classifier not found, using randomly initialized classifier")
 
-
     return base_model, tokenizer, classifier, adapter_path
 
 
 def _predict_custom_single(
-    base_model,
-    tokenizer,
-    classifier,
-    input_text: str,
-    labels=None,
-    max_length: int = 512,
+        base_model,
+        tokenizer,
+        classifier,
+        input_text: str,
+        labels=None,
+        max_length: int = 512,
 ) -> Dict[str, Any]:
     inputs = tokenizer(
         input_text,
@@ -122,10 +121,10 @@ def _predict_custom_single(
 
 
 def run_infer_custom(
-    input_text_or_json: Optional[Union[str, os.PathLike]] = None,
-    labels=None,
-    adapter_path: Optional[str] = None,
-    output_path: Optional[str] = None,
+        input_text_or_json: Optional[Union[str, os.PathLike]] = None,
+        labels=None,
+        adapter_path: Optional[str] = None,
+        output_path: Optional[str] = None,
 ) -> Union[Dict[str, Any], Dict[str, Any]]:
     """
     If input is a string text -> returns single-item output dict.
@@ -138,7 +137,8 @@ def run_infer_custom(
     max_length = training_config.get("max_length", 512)
 
     # Dataset mode
-    if input_text_or_json is None or (isinstance(input_text_or_json, (str, os.PathLike)) and os.path.exists(str(input_text_or_json))):
+    if input_text_or_json is None or (
+            isinstance(input_text_or_json, (str, os.PathLike)) and os.path.exists(str(input_text_or_json))):
         paths_config = CONFIG["paths"]
         experiment_name = CONFIG.get("experiment", "orchestra")
         test_path = str(input_text_or_json) if input_text_or_json is not None else paths_config["data"]["test"]
@@ -152,7 +152,7 @@ def run_infer_custom(
 
         results: List[Dict[str, Any]] = []
         logger.info(f"Running custom-head inference on dataset: {test_path} ({len(data)} samples)")
-        
+
         # Initialize energy tracker for Green AI metrics
         output_dir = os.path.dirname(output_path)
         energy_tracker = None
@@ -166,13 +166,13 @@ def run_infer_custom(
             logger.info("✓ Started energy tracking for inference")
         except Exception as e:
             logger.warning(f"Could not initialize energy tracker: {e}")
-        
+
         # Reset memory tracking and calculate FLOPs on first sample
         device = next(base_model.parameters()).device
         reset_memory_tracking(device)
         flops_per_sample = 0
         peak_memory_mb = 0.0
-        
+
         for i, item in enumerate(data):
             text = item["text"]
             true_label = item.get("label")
@@ -181,7 +181,7 @@ def run_infer_custom(
             latency_ms = (time.time() - start) * 1000.0
             probs = out["probs"].squeeze(0).detach().cpu().tolist()
             pred = int(int(torch.tensor(probs).argmax().item()))
-            
+
             # Calculate FLOPs on first sample
             if i == 0:
                 try:
@@ -193,13 +193,13 @@ def run_infer_custom(
                         max_length=max_length,
                     )
                     inputs = {k: v.to(device) for k, v in inputs.items()}
-                    
+
                     # Calculate FLOPs for base model
                     base_flops = calculate_flops_for_transformer(
                         base_model, inputs["input_ids"], inputs.get("attention_mask")
                     )
                     logger.info(f"  Base model FLOPs per sample: {base_flops:,}")
-                    
+
                     # Calculate FLOPs for classifier (approximate by running forward pass)
                     # We'll use thop to profile the combined forward pass
                     classifier_flops = 0
@@ -222,18 +222,20 @@ def run_infer_custom(
                         logger.warning(f"  Could not calculate classifier FLOPs: {e}")
                         logger.warning(f"  Falling back to base model FLOPs only")
                         classifier_flops_calculated = False
-                    
+
                     flops_per_sample = int(base_flops + classifier_flops)
-                    
+
                     if classifier_flops_calculated:
-                        logger.info(f"  Total forward FLOPs per sample: {flops_per_sample:,} (base: {base_flops:,} + classifier: {classifier_flops:,})")
+                        logger.info(
+                            f"  Total forward FLOPs per sample: {flops_per_sample:,} (base: {base_flops:,} + classifier: {classifier_flops:,})")
                     else:
-                        logger.info(f"  Total forward FLOPs per sample: {flops_per_sample:,} (base model only, classifier FLOPs unavailable)")
+                        logger.info(
+                            f"  Total forward FLOPs per sample: {flops_per_sample:,} (base model only, classifier FLOPs unavailable)")
                     logger.info(f"  (Using standard industry approach)")
                 except Exception as e:
                     logger.warning(f"  Could not calculate FLOPs: {e}")
                     flops_per_sample = 0
-            
+
             # Track peak memory usage
             memory_info = get_memory_usage(device)
             if device.type == 'cuda' and torch.cuda.is_available():
@@ -241,7 +243,7 @@ def run_infer_custom(
             else:
                 current_peak = memory_info.get('cpu_rss_mb', 0.0)
             peak_memory_mb = max(peak_memory_mb, current_peak)
-            
+
             results.append(
                 {
                     "text": text,
@@ -256,7 +258,7 @@ def run_infer_custom(
 
         # Get final memory stats
         final_memory_info = get_memory_usage(device)
-        
+
         # Stop energy tracking and get metrics
         energy_metrics = {}
         if energy_tracker is not None:
@@ -265,12 +267,12 @@ def run_infer_custom(
                 logger.info("✓ Stopped energy tracking")
             except Exception as e:
                 logger.warning(f"Error stopping energy tracker: {e}")
-        
+
         # Calculate total FLOPs for entire inference run
         total_flops = int(flops_per_sample * len(results)) if flops_per_sample > 0 else 0
         if total_flops > 0:
             logger.info(f"  Total inference FLOPs: {total_flops:,} (for {len(results)} samples)")
-        
+
         payload = {
             "experiment": experiment_name,
             "head": "custom_head",
@@ -285,7 +287,7 @@ def run_infer_custom(
                 "memory_info": {k: float(v) for k, v in final_memory_info.items()},
             },
         }
-        
+
         # Add energy and carbon metrics (Green AI metrics)
         if energy_metrics:
             payload["metrics"]["energy_consumption"] = {
@@ -301,7 +303,7 @@ def run_infer_custom(
                 "country_name": energy_metrics.get("country_name", "unknown"),
                 "region": energy_metrics.get("region", "unknown"),
             }
-            
+
             energy_kwh = energy_metrics.get("energy_consumed_kwh", 0.0)
             emissions = energy_metrics.get("emissions_gco2eq", 0.0)
             if energy_kwh > 0:
@@ -318,4 +320,5 @@ def run_infer_custom(
     # Single-text mode
     training_config = CONFIG.get("training", {})
     max_length = training_config.get("max_length", 512)
-    return _predict_custom_single(base_model, tokenizer, classifier, str(input_text_or_json), labels=labels, max_length=max_length)
+    return _predict_custom_single(base_model, tokenizer, classifier, str(input_text_or_json), labels=labels,
+                                  max_length=max_length)
