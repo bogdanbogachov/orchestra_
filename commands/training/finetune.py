@@ -1,3 +1,5 @@
+import os
+
 from config import CONFIG
 from logger_config import logger
 
@@ -20,23 +22,7 @@ def run_finetune():
     paths_config = CONFIG['paths']
     experiment_name = CONFIG.get('experiment', 'orchestra')
     experiments_dir = paths_config['experiments']
-    
-    # Extract global_exp_num and restructure path
-    # Format: base_name_global_exp_num_per_config_exp_num
-    # Example: "35_l_default_9_10" -> global_exp_num=9, base_with_per_config="35_l_default_10"
-    import re
-    match = re.match(r'^(.+)_(\d+)_(\d+)$', experiment_name)
-    if match:
-        base_name = match.group(1)
-        global_exp_num = match.group(2)
-        per_config_exp_num = match.group(3)
-        # New structure: experiments/global_exp_num/base_name_per_config_exp_num/head_type
-        base_with_per_config = f"{base_name}_{per_config_exp_num}"
-        experiment_base_dir = os.path.join(experiments_dir, global_exp_num, base_with_per_config)
-    else:
-        # Fallback for non-standard experiment names
-        experiment_base_dir = os.path.join(experiments_dir, experiment_name)
-    
+
     # Use random seed if specified, otherwise use None for non-deterministic training
     # Check environment variable first, then config file
     seed = os.getenv('SEED')
@@ -57,26 +43,6 @@ def run_finetune():
 
     model, tokenizer, use_custom_head = load_model_and_tokenizer()
     model = setup_lora(model, use_custom_head)
-    
-    head_type = "custom_head" if use_custom_head else "default_head"
-    output_dir = os.path.join(experiment_base_dir, head_type)
-    os.makedirs(output_dir, exist_ok=True)
-    max_length = training_config['max_length']
-    
-    logger.info(f"Training {head_type} - output directory: {output_dir}")
-    
-    all_texts, all_labels = load_data(paths_config['data']['train'])
-    # Use random state only if seed is set, otherwise use None for random splits
-    split_random_state = data_config.get('random_state') if seed is not None else None
-    train_texts, val_texts, train_labels, val_labels = train_test_split(
-        all_texts, all_labels, 
-        test_size=data_config['test_size'],
-        random_state=split_random_state,
-        stratify=all_labels if data_config['stratify'] else None
-    )
-    
-    train_dataset = ClassificationDataset(train_texts, train_labels, tokenizer, max_length=max_length)
-    val_dataset = ClassificationDataset(val_texts, val_labels, tokenizer, max_length=max_length)
 
     output_base, output_dir, head_type, global_exp_num = resolve_output_dirs(
         experiments_dir=experiments_dir,
