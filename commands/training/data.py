@@ -1,8 +1,11 @@
 import json
 import torch
+from collections import Counter
 from typing import List, Tuple, Optional
 from torch.utils.data import Dataset
 from sklearn.model_selection import train_test_split
+
+from logger_config import logger
 
 
 class ClassificationDataset(Dataset):
@@ -50,12 +53,23 @@ def make_splits(
     seed: Optional[int],
 ):
     split_random_state = data_config.get("random_state") if seed is not None else None
+    stratify_labels = labels if data_config.get("stratify") else None
+    if stratify_labels is not None:
+        label_counts = Counter(labels)
+        least_populated_count = min(label_counts.values()) if label_counts else 0
+        if least_populated_count < 2:
+            logger.warning(
+                "Disabling stratified validation split because at least one label has fewer than 2 examples "
+                f"(min_count={least_populated_count})."
+            )
+            stratify_labels = None
+
     train_texts, val_texts, train_labels, val_labels = train_test_split(
         texts,
         labels,
         test_size=data_config["test_size"],
         random_state=split_random_state,
-        stratify=labels if data_config.get("stratify") else None,
+        stratify=stratify_labels,
     )
     return train_texts, val_texts, train_labels, val_labels
 
