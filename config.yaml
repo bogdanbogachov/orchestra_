@@ -8,7 +8,7 @@ model:
   pooling_strategy: "mean"
   use_fft: true
 
-  num_labels: 24
+  num_labels: 5
   pad_token: "<|reserved_special_token_15|>"
   torch_dtype: "float32"
   device_map: "auto"
