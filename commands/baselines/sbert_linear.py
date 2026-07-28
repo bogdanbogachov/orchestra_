@@ -18,6 +18,7 @@ from commands.baselines.common import (
     save_pickle,
     save_run_metadata,
     timed_energy,
+    verify_model_available,
     write_evaluation_results,
     write_predictions,
 )
@@ -95,6 +96,7 @@ def run_sbert_linear(
     logger.info(f"Running {baseline_name}: model={model_name}, device={device}, output={output_dir}")
 
     reset_memory()
+    verify_model_available(model_name)
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     model = AutoModel.from_pretrained(model_name).to(device)
 

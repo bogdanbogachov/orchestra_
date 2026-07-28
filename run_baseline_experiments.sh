@@ -36,5 +36,5 @@ for config in "${BASELINE_EXPERIMENTS[@]}"; do
     seed=$(get_seed_for_experiment "$exp_name")
 
     echo "Submitting baseline: EXP=$exp_name BASELINE=$baseline SEED=$seed"
-    EXP="$exp_name" BASELINE="$baseline" SEED="$seed" sbatch baseline_job.sh
+    EXP="$exp_name" BASELINE="$baseline" SEED="$seed" sbatch -J "$exp_name" baseline_job.sh
 done

@@ -21,6 +21,7 @@ from commands.baselines.common import (
     resolve_baseline_output_dir,
     save_run_metadata,
     timed_energy,
+    verify_model_available,
     write_evaluation_results,
     write_predictions,
 )
@@ -51,6 +52,7 @@ def run_distilbert_cls(
 
     logger.info(f"Running {baseline_name}: model={model_name}, labels={num_labels}, output={output_dir}")
 
+    verify_model_available(model_name)
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     model = AutoModelForSequenceClassification.from_pretrained(model_name, num_labels=num_labels)
 

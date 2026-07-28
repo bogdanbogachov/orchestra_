@@ -20,13 +20,13 @@ source venv/bin/activate
 case "${BASELINE}" in
   sbert_linear)
     python baselines/run_sbert_linear.py \
-      --model-name "${SBERT_MODEL:-sentence-transformers/all-MiniLM-L6-v2}" \
+      --model-name "downloaded_models/all-MiniLM-L6-v2" \
       --batch-size "${BASELINE_BATCH_SIZE:-64}" \
       --max-length "${BASELINE_MAX_LENGTH:-128}"
     ;;
   distilbert_cls)
     python baselines/run_distilbert_cls.py \
-      --model-name "${DISTILBERT_MODEL:-distilbert-base-uncased}" \
+      --model-name "downloaded_models/distilbert-base-uncased" \
       --batch-size "${BASELINE_BATCH_SIZE:-32}" \
       --max-length "${BASELINE_MAX_LENGTH:-128}" \
       --num-train-epochs "${DISTILBERT_EPOCHS:-10}" \

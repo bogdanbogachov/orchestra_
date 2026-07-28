@@ -25,6 +25,21 @@ def load_json_dataset(path: str) -> Tuple[List[str], List[int]]:
     return [str(item["text"]) for item in data], [int(item["label"]) for item in data]
 
 
+def verify_model_available(model_name: str) -> None:
+    if os.path.isdir(model_name):
+        required = ["config.json"]
+        missing = [name for name in required if not os.path.exists(os.path.join(model_name, name))]
+        if missing:
+            raise FileNotFoundError(f"Model directory exists but is missing {missing}: {model_name}")
+        return
+
+    if os.getenv("TRANSFORMERS_OFFLINE") == "1" or os.getenv("HF_HUB_OFFLINE") == "1":
+        raise FileNotFoundError(
+            f"Model path is not local and offline mode is enabled: {model_name}. "
+            "Run baselines/download_baseline_models.py first and pass a downloaded_models/... path."
+        )
+
+
 def resolve_seed() -> Optional[int]:
     seed = os.getenv("SEED")
     if seed is not None:
