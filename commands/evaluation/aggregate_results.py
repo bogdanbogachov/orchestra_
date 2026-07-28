@@ -24,6 +24,9 @@ from matplotlib import rcParams
 from config import CONFIG
 from logger_config import logger
 
+
+RESULT_SUBDIRS = ["default_head", "custom_head", "sbert_linear", "distilbert_cls"]
+
 # Set publication-quality matplotlib settings
 rcParams['font.family'] = 'serif'
 rcParams['font.serif'] = ['Times New Roman', 'Times', 'DejaVu Serif']
@@ -234,8 +237,8 @@ def aggregate_metrics(experiments_dir: str, global_exp_num: Optional[int] = None
         if not os.path.isdir(exp_path):
             continue
         
-        # Try both heads
-        for head in ["default_head", "custom_head"]:
+        # Try model/head result subdirectories.
+        for head in RESULT_SUBDIRS:
             results = load_evaluation_results(exp_path, head)
             if results is None:
                 continue
@@ -298,6 +301,11 @@ def get_experiment_sort_key(exp_name: str) -> int:
     Returns a sort key (lower number = earlier in order).
     """
     exp_lower = exp_name.lower()
+
+    if 'sbert' in exp_lower or 'minilm' in exp_lower:
+        return 10
+    if 'distilbert' in exp_lower:
+        return 11
     
     # Check for default (not custom)
     if 'default' in exp_lower and 'custom' not in exp_lower:

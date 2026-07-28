@@ -1,201 +1,343 @@
 #!/usr/bin/env python3
 """
-Generate significance analysis for rebuttal response.
+Run paired significance tests from raw seed-level experiment outputs.
 
-The available final 10-seed artifacts contain summary statistics
-(mean/std/count) but not the raw per-seed paired values for all datasets.
-Accordingly, this script reports Welch two-sample t-tests from summary stats
-and explicitly marks paired tests as unavailable unless raw per-seed results
-are present.
+Expected input layout:
+  raw_results_pull/<aggregation_id>/<experiment_base>_<seed>/<head>/evaluation_results.json
+
+Outputs:
+  rebuttal_significance/significance_results.md
+  rebuttal_significance/per_seed_metrics.csv
+  rebuttal_significance/metric_summary.csv
+  rebuttal_significance/primary_paired_tests.csv
+  rebuttal_significance/all_pairwise_f1_paired_tests.csv
 """
 
+from __future__ import annotations
+
+import csv
+import itertools
 import json
 import math
+import re
+from collections import defaultdict
 from pathlib import Path
-from typing import Dict, Iterable, List
+from typing import Dict, Iterable, List, Sequence, Tuple
 
+import numpy as np
 from scipy import stats
 
 
 ROOT = Path(__file__).resolve().parents[1]
+RAW_ROOT = ROOT / "raw_results_pull"
 OUT_DIR = ROOT / "rebuttal_significance"
-OUT_MD = OUT_DIR / "significance_results.md"
 
+METRICS = ["accuracy", "precision", "recall", "f1"]
 
-COMPARISONS = [
-    {
-        "dataset": "BANKING77 noisy",
-        "aggregation": "62",
-        "attention": "banking77_noise_custom_attention",
-        "default": "banking77_noise_default",
-        "custom_last": "banking77_noise_custom_last",
-    },
-    {
-        "dataset": "BANKING77 clean",
-        "aggregation": "63",
-        "attention": "banking77_clean_custom_attention",
-        "default": "banking77_clean_default",
-        "custom_last": "banking77_clean_custom_last",
-    },
-    {
-        "dataset": "CLINC150 noisy",
-        "aggregation": "67",
-        "attention": "clinc150_noise_custom_attention",
-        "default": "clinc150_noise_default",
-        "custom_last": "clinc150_noise_custom_last",
-    },
-    {
-        "dataset": "CLINC150 clean",
-        "aggregation": "66",
-        "attention": "clinc150_clean_custom_attention",
-        "default": "clinc150_clean_default",
-        "custom_last": "clinc150_clean_custom_last",
-    },
-    {
-        "dataset": "Production selected-5 noisy",
-        "aggregation": "71",
-        "attention": "additional_noise_custom_attention",
-        "default": "additional_noise_default",
-        "custom_last": "additional_noise_custom_last",
-    },
+DATASET_LABELS = {
+    "62": "BANKING77 noisy",
+    "63": "BANKING77 clean",
+    "66": "CLINC150 clean",
+    "67": "CLINC150 noisy",
+    "71": "Production selected-5 noisy",
+}
+
+PRIMARY_COMPARISONS = [
+    ("62", "banking77_noise_custom_attention", "banking77_noise_default", "attention vs default head"),
+    ("62", "banking77_noise_custom_attention", "banking77_noise_custom_last", "attention vs custom last-token"),
+    ("63", "banking77_clean_custom_attention", "banking77_clean_default", "attention vs default head"),
+    ("63", "banking77_clean_custom_attention", "banking77_clean_custom_last", "attention vs custom last-token"),
+    ("67", "clinc150_noise_custom_attention", "clinc150_noise_default", "attention vs default head"),
+    ("67", "clinc150_noise_custom_attention", "clinc150_noise_custom_last", "attention vs custom last-token"),
+    ("66", "clinc150_clean_custom_attention", "clinc150_clean_default", "attention vs default head"),
+    ("66", "clinc150_clean_custom_attention", "clinc150_clean_custom_last", "attention vs custom last-token"),
+    ("71", "additional_noise_custom_attention", "additional_noise_default", "attention vs default head"),
+    ("71", "additional_noise_custom_attention", "additional_noise_custom_last", "attention vs custom last-token"),
 ]
 
 
-def load_detail(aggregation: str) -> Dict:
-    path = ROOT / "aggregations" / aggregation / "detailed_statistics.json"
-    with path.open("r", encoding="utf-8") as f:
-        return json.load(f)
+def parse_experiment_dir(name: str) -> Tuple[str, int]:
+    match = re.match(r"^(.+)_(\d+)$", name)
+    if not match:
+        raise ValueError(f"Cannot parse experiment directory name: {name}")
+    return match.group(1), int(match.group(2))
 
 
-def metric(detail: Dict, exp: str, metric_name: str = "f1") -> Dict[str, float]:
-    return detail[exp][metric_name]
+def load_raw_results() -> Dict[str, Dict[str, Dict[int, Dict[str, float]]]]:
+    if not RAW_ROOT.exists():
+        raise FileNotFoundError(f"Missing raw results directory: {RAW_ROOT}")
+
+    data: Dict[str, Dict[str, Dict[int, Dict[str, float]]]] = defaultdict(lambda: defaultdict(dict))
+    for path in sorted(RAW_ROOT.glob("*/*/*/evaluation_results.json")):
+        aggregation = path.parents[2].name
+        experiment_dir = path.parents[1].name
+        base_name, seed = parse_experiment_dir(experiment_dir)
+        with path.open("r", encoding="utf-8") as f:
+            payload = json.load(f)
+        data[aggregation][base_name][seed] = {
+            metric: float(payload[metric])
+            for metric in METRICS
+            if metric in payload
+        }
+
+    return data
 
 
-def fmt_pct(x: float) -> str:
-    return f"{100 * x:.2f}"
+def ensure_complete(data: Dict[str, Dict[str, Dict[int, Dict[str, float]]]]) -> List[str]:
+    problems: List[str] = []
+    for aggregation, experiments in sorted(data.items()):
+        for exp_name, seed_map in sorted(experiments.items()):
+            seeds = sorted(seed_map)
+            if seeds != list(range(1, 11)):
+                problems.append(f"{aggregation}/{exp_name}: expected seeds 1..10, found {seeds}")
+            for seed, metrics in seed_map.items():
+                missing = [m for m in METRICS if m not in metrics]
+                if missing:
+                    problems.append(f"{aggregation}/{exp_name}/seed {seed}: missing metrics {missing}")
+    return problems
 
 
-def fmt_p(p: float) -> str:
-    if math.isnan(p):
-        return "NA"
-    if p < 0.001:
-        return "<0.001"
-    return f"{p:.4f}"
+def mean_sd(values: Sequence[float]) -> Tuple[float, float]:
+    arr = np.asarray(values, dtype=float)
+    return float(arr.mean()), float(arr.std(ddof=1))
 
 
-def welch_from_summary(a: Dict[str, float], b: Dict[str, float]) -> Dict[str, float]:
-    mean_a, sd_a, n_a = a["mean"], a["std"], int(a["count"])
-    mean_b, sd_b, n_b = b["mean"], b["std"], int(b["count"])
-    result = stats.ttest_ind_from_stats(
-        mean1=mean_a,
-        std1=sd_a,
-        nobs1=n_a,
-        mean2=mean_b,
-        std2=sd_b,
-        nobs2=n_b,
-        equal_var=False,
-    )
+def paired_test(
+    data: Dict[str, Dict[str, Dict[int, Dict[str, float]]]],
+    aggregation: str,
+    treatment: str,
+    comparator: str,
+    metric: str,
+    label: str,
+) -> Dict[str, object]:
+    treatment_seeds = set(data[aggregation][treatment])
+    comparator_seeds = set(data[aggregation][comparator])
+    paired_seeds = sorted(treatment_seeds & comparator_seeds)
+    if len(paired_seeds) < 2:
+        raise ValueError(f"Need at least two matched seeds for {aggregation}: {treatment} vs {comparator}")
 
-    se = math.sqrt((sd_a ** 2) / n_a + (sd_b ** 2) / n_b)
-    numerator = ((sd_a ** 2) / n_a + (sd_b ** 2) / n_b) ** 2
-    denominator = ((sd_a ** 2 / n_a) ** 2) / (n_a - 1) + ((sd_b ** 2 / n_b) ** 2) / (n_b - 1)
-    df = numerator / denominator
-    diff = mean_a - mean_b
+    treatment_values = np.asarray([data[aggregation][treatment][s][metric] for s in paired_seeds], dtype=float)
+    comparator_values = np.asarray([data[aggregation][comparator][s][metric] for s in paired_seeds], dtype=float)
+    diff = treatment_values - comparator_values
+
+    t_res = stats.ttest_rel(treatment_values, comparator_values)
+    mean_diff = float(diff.mean())
+    sd_diff = float(diff.std(ddof=1))
+    se = sd_diff / math.sqrt(len(diff))
+    df = len(diff) - 1
     tcrit = stats.t.ppf(0.975, df)
-    pooled_sd = math.sqrt(((n_a - 1) * sd_a ** 2 + (n_b - 1) * sd_b ** 2) / (n_a + n_b - 2))
-    cohen_d = diff / pooled_sd if pooled_sd else float("nan")
+    ci_low = mean_diff - tcrit * se
+    ci_high = mean_diff + tcrit * se
+    dz = mean_diff / sd_diff if sd_diff else float("nan")
+
+    # Wilcoxon is useful as a robustness check; zero_method handles rare equal pairs.
+    try:
+        w_res = stats.wilcoxon(treatment_values, comparator_values, zero_method="wilcox")
+        wilcoxon_p = float(w_res.pvalue)
+    except ValueError:
+        wilcoxon_p = float("nan")
+
+    treatment_mean, treatment_sd = mean_sd(treatment_values)
+    comparator_mean, comparator_sd = mean_sd(comparator_values)
 
     return {
-        "diff": diff,
-        "t": float(result.statistic),
-        "p": float(result.pvalue),
-        "df": float(df),
-        "ci_low": diff - tcrit * se,
-        "ci_high": diff + tcrit * se,
-        "cohen_d": cohen_d,
+        "aggregation": aggregation,
+        "dataset": DATASET_LABELS.get(aggregation, aggregation),
+        "metric": metric,
+        "comparison": label,
+        "treatment": treatment,
+        "comparator": comparator,
+        "n": len(paired_seeds),
+        "seeds": " ".join(str(s) for s in paired_seeds),
+        "treatment_mean": treatment_mean,
+        "treatment_sd": treatment_sd,
+        "comparator_mean": comparator_mean,
+        "comparator_sd": comparator_sd,
+        "mean_diff": mean_diff,
+        "diff_sd": sd_diff,
+        "ci_low": ci_low,
+        "ci_high": ci_high,
+        "t": float(t_res.statistic),
+        "df": df,
+        "p": float(t_res.pvalue),
+        "wilcoxon_p": wilcoxon_p,
+        "cohen_dz": dz,
     }
 
 
-def holm_adjust(rows: List[Dict[str, object]]) -> None:
-    ordered = sorted(enumerate(rows), key=lambda pair: pair[1]["p"])
-    m = len(rows)
-    prev = 0.0
-    adjusted = [None] * m
-    for rank, (idx, row) in enumerate(ordered, start=1):
-        adj = min(1.0, (m - rank + 1) * float(row["p"]))
-        adj = max(prev, adj)
-        prev = adj
-        adjusted[idx] = adj
-    for row, adj in zip(rows, adjusted):
-        row["p_holm"] = adj
+def holm_adjust(rows: List[Dict[str, object]], p_key: str = "p", out_key: str = "p_holm") -> None:
+    indexed = sorted(enumerate(rows), key=lambda pair: float(pair[1][p_key]))
+    m = len(indexed)
+    previous = 0.0
+    adjusted = [1.0] * len(rows)
+    for rank, (idx, row) in enumerate(indexed, start=1):
+        value = min(1.0, (m - rank + 1) * float(row[p_key]))
+        value = max(previous, value)
+        previous = value
+        adjusted[idx] = value
+    for row, value in zip(rows, adjusted):
+        row[out_key] = value
 
 
-def add_comparison(
-    rows: List[Dict[str, object]],
-    dataset: str,
-    comparator_label: str,
-    attention: Dict[str, float],
-    comparator: Dict[str, float],
-) -> None:
-    test = welch_from_summary(attention, comparator)
-    rows.append(
-        {
-            "dataset": dataset,
-            "comparison": f"attention vs {comparator_label}",
-            "attention_mean": attention["mean"],
-            "attention_sd": attention["std"],
-            "comparator_mean": comparator["mean"],
-            "comparator_sd": comparator["std"],
-            "n_attention": int(attention["count"]),
-            "n_comparator": int(comparator["count"]),
-            **test,
-        }
-    )
+def write_csv(path: Path, rows: List[Dict[str, object]], fieldnames: Sequence[str]) -> None:
+    with path.open("w", encoding="utf-8", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def fmt_pct(value: float) -> str:
+    return f"{100 * value:.2f}"
+
+
+def fmt_p(value: float) -> str:
+    if value is None or math.isnan(float(value)):
+        return "NA"
+    value = float(value)
+    if value < 0.001:
+        return "<0.001"
+    return f"{value:.4f}"
 
 
 def markdown_table(headers: Iterable[str], rows: Iterable[Iterable[str]]) -> str:
     headers = list(headers)
-    out = ["| " + " | ".join(headers) + " |"]
-    out.append("| " + " | ".join(["---"] * len(headers)) + " |")
+    lines = ["| " + " | ".join(headers) + " |"]
+    lines.append("| " + " | ".join(["---"] * len(headers)) + " |")
     for row in rows:
-        out.append("| " + " | ".join(row) + " |")
-    return "\n".join(out)
+        lines.append("| " + " | ".join(row) + " |")
+    return "\n".join(lines)
 
 
-def main() -> None:
+def build_per_seed_rows(data: Dict[str, Dict[str, Dict[int, Dict[str, float]]]]) -> List[Dict[str, object]]:
     rows: List[Dict[str, object]] = []
-    claim_rows: List[Dict[str, object]] = []
+    for aggregation, experiments in sorted(data.items()):
+        for exp_name, seed_map in sorted(experiments.items()):
+            for seed, metrics in sorted(seed_map.items()):
+                row = {
+                    "aggregation": aggregation,
+                    "dataset": DATASET_LABELS.get(aggregation, aggregation),
+                    "experiment": exp_name,
+                    "seed": seed,
+                }
+                row.update(metrics)
+                rows.append(row)
+    return rows
 
-    for item in COMPARISONS:
-        detail = load_detail(item["aggregation"])
-        att = metric(detail, item["attention"])
-        default = metric(detail, item["default"])
-        custom_last = metric(detail, item["custom_last"])
 
-        claim_rows.append(
-            {
-                "dataset": item["dataset"],
-                "attention": att,
-                "default": default,
-                "custom_last": custom_last,
-                "gain_vs_default": att["mean"] - default["mean"],
-                "gain_vs_custom_last": att["mean"] - custom_last["mean"],
+def build_summary_rows(data: Dict[str, Dict[str, Dict[int, Dict[str, float]]]]) -> List[Dict[str, object]]:
+    rows: List[Dict[str, object]] = []
+    for aggregation, experiments in sorted(data.items()):
+        for exp_name, seed_map in sorted(experiments.items()):
+            row = {
+                "aggregation": aggregation,
+                "dataset": DATASET_LABELS.get(aggregation, aggregation),
+                "experiment": exp_name,
+                "n": len(seed_map),
             }
-        )
+            for metric in METRICS:
+                values = [seed_map[s][metric] for s in sorted(seed_map)]
+                mean, sd = mean_sd(values)
+                row[f"{metric}_mean"] = mean
+                row[f"{metric}_sd"] = sd
+            rows.append(row)
+    return rows
 
-        add_comparison(rows, item["dataset"], "default head", att, default)
-        add_comparison(rows, item["dataset"], "custom last-token", att, custom_last)
 
-    holm_adjust(rows)
+def build_primary_tests(data: Dict[str, Dict[str, Dict[int, Dict[str, float]]]]) -> List[Dict[str, object]]:
+    rows: List[Dict[str, object]] = []
+    for aggregation, treatment, comparator, label in PRIMARY_COMPARISONS:
+        for metric in METRICS:
+            rows.append(paired_test(data, aggregation, treatment, comparator, metric, label))
+
+    for metric in METRICS:
+        metric_rows = [r for r in rows if r["metric"] == metric]
+        holm_adjust(metric_rows)
+
+    return rows
+
+
+def build_all_pairwise_f1(data: Dict[str, Dict[str, Dict[int, Dict[str, float]]]]) -> List[Dict[str, object]]:
+    rows: List[Dict[str, object]] = []
+    for aggregation, experiments in sorted(data.items()):
+        for left, right in itertools.combinations(sorted(experiments), 2):
+            label = f"{left} vs {right}"
+            rows.append(paired_test(data, aggregation, left, right, "f1", label))
+
+    for aggregation in sorted(data):
+        agg_rows = [r for r in rows if r["aggregation"] == aggregation]
+        holm_adjust(agg_rows)
+
+    return rows
+
+
+def find_primary(rows: List[Dict[str, object]], aggregation: str, comparison: str, metric: str = "f1") -> Dict[str, object]:
+    for row in rows:
+        if row["aggregation"] == aggregation and row["comparison"] == comparison and row["metric"] == metric:
+            return row
+    raise KeyError((aggregation, comparison, metric))
+
+
+def write_markdown(
+    data: Dict[str, Dict[str, Dict[int, Dict[str, float]]]],
+    summary_rows: List[Dict[str, object]],
+    primary_rows: List[Dict[str, object]],
+) -> None:
+    coverage_rows = []
+    for aggregation, experiments in sorted(data.items()):
+        seed_counts = sorted({len(seed_map) for seed_map in experiments.values()})
+        coverage_rows.append([
+            aggregation,
+            DATASET_LABELS.get(aggregation, aggregation),
+            str(len(experiments)),
+            ", ".join(str(x) for x in seed_counts),
+        ])
+
+    claim_rows = []
+    for aggregation, treatment, comparator, label in PRIMARY_COMPARISONS:
+        if label != "attention vs custom last-token":
+            continue
+        default_test = find_primary(primary_rows, aggregation, "attention vs default head")
+        last_test = find_primary(primary_rows, aggregation, "attention vs custom last-token")
+        claim_rows.append([
+            DATASET_LABELS.get(aggregation, aggregation),
+            f"{fmt_pct(float(last_test['treatment_mean']))} +/- {fmt_pct(float(last_test['treatment_sd']))}",
+            f"{fmt_pct(float(default_test['comparator_mean']))} +/- {fmt_pct(float(default_test['comparator_sd']))}",
+            f"{fmt_pct(float(last_test['comparator_mean']))} +/- {fmt_pct(float(last_test['comparator_sd']))}",
+            f"{fmt_pct(float(default_test['mean_diff']))} pp",
+            f"{fmt_pct(float(last_test['mean_diff']))} pp",
+        ])
+
+    primary_f1_rows = [r for r in primary_rows if r["metric"] == "f1"]
+    primary_table_rows = [
+        [
+            str(r["dataset"]),
+            str(r["comparison"]),
+            f"{fmt_pct(float(r['mean_diff']))} pp",
+            f"[{fmt_pct(float(r['ci_low']))}, {fmt_pct(float(r['ci_high']))}]",
+            f"{float(r['t']):.3f} ({int(r['df'])})",
+            fmt_p(float(r["p"])),
+            fmt_p(float(r["p_holm"])),
+            fmt_p(float(r["wilcoxon_p"])),
+            f"{float(r['cohen_dz']):.2f}",
+        ]
+        for r in primary_f1_rows
+    ]
+
+    noisy_banking = find_primary(primary_rows, "62", "attention vs custom last-token")
+    noisy_clinc = find_primary(primary_rows, "67", "attention vs custom last-token")
+    production = find_primary(primary_rows, "71", "attention vs custom last-token")
+    production_default = find_primary(primary_rows, "71", "attention vs default head")
 
     lines = [
-        "# Significance Analysis for Reviewer Comment 3",
+        "# Significance Analysis From Raw Seed Results",
         "",
         "## Inputs",
         "",
-        "Source files: `aggregations/{62,63,66,67,71}/detailed_statistics.json`.",
+        "Source directory: `raw_results_pull/`.",
         "",
-        "Important limitation: these aggregation files contain only `mean`, `std`, and `count`; they do not contain the ten raw seed-level values. Therefore the tests below are Welch two-sample t-tests from summary statistics. A paired t-test cannot be reconstructed from these summaries because it requires the per-seed paired differences.",
+        "The runner uses matched seed-level `evaluation_results.json` files and runs paired tests on seeds `1..10`. This is the correct test family for the reviewer comment because each condition was run under the same seed indices.",
+        "",
+        markdown_table(["Aggregation", "Dataset", "Configurations", "Seeds per configuration"], coverage_rows),
         "",
         "## Claim Check",
         "",
@@ -208,71 +350,111 @@ def main() -> None:
                 "Gain vs default",
                 "Gain vs custom last",
             ],
-            [
-                [
-                    r["dataset"],
-                    f"{fmt_pct(r['attention']['mean'])} +/- {fmt_pct(r['attention']['std'])}",
-                    f"{fmt_pct(r['default']['mean'])} +/- {fmt_pct(r['default']['std'])}",
-                    f"{fmt_pct(r['custom_last']['mean'])} +/- {fmt_pct(r['custom_last']['std'])}",
-                    f"{fmt_pct(r['gain_vs_default'])} pp",
-                    f"{fmt_pct(r['gain_vs_custom_last'])} pp",
-                ]
-                for r in claim_rows
-            ],
+            claim_rows,
         ),
         "",
-        "The reviewer is correct about the arithmetic for the noisy proxy datasets: attention improves over the default head by 2.64 F1 points on noisy BANKING77 and 2.83 F1 points on noisy CLINC150, but over the fairer custom last-token comparator the gains are much smaller: 0.34 and 0.46 F1 points, respectively.",
+        "The reviewer's arithmetic is correct for the proxy noisy datasets: the `+2.6-2.8 F1` gain is against the default head, while the gain against the fairer custom last-token comparator is much smaller.",
         "",
-        "On clean proxy data, attention is not consistently better than custom last-token pooling: it is 0.05 points lower on clean BANKING77 and 0.76 points lower on clean CLINC150. On the new production selected-5 evaluation, attention is materially stronger than both default and custom last-token pooling.",
-        "",
-        "## Welch Tests From Summary Statistics",
+        "## Primary Paired F1 Tests",
         "",
         markdown_table(
             [
                 "Dataset",
                 "Comparison",
-                "Mean diff F1 pp",
-                "95% CI pp",
-                "t(df)",
+                "Mean diff",
+                "95% CI",
+                "paired t(df)",
                 "p",
                 "Holm p",
-                "Cohen d",
+                "Wilcoxon p",
+                "Cohen dz",
             ],
-            [
-                [
-                    str(r["dataset"]),
-                    str(r["comparison"]),
-                    fmt_pct(float(r["diff"])),
-                    f"[{fmt_pct(float(r['ci_low']))}, {fmt_pct(float(r['ci_high']))}]",
-                    f"{float(r['t']):.3f} ({float(r['df']):.1f})",
-                    fmt_p(float(r["p"])),
-                    fmt_p(float(r["p_holm"])),
-                    f"{float(r['cohen_d']):.2f}",
-                ]
-                for r in rows
-            ],
+            primary_table_rows,
         ),
         "",
-        "## Interpretation for Rebuttal",
+        "Holm correction is applied within the primary F1 family shown above. The CSV output also contains paired tests for accuracy, precision, and recall.",
         "",
-        "- Do not defend the abstract-level `+2.6-2.8 F1` statement as a pooling-only gain. The reviewer is right that those numbers use the default head as comparator, while the paper itself says C0 differs by head/training setup.",
-        "- The fair proxy-data statement should be narrowed: attention pooling yields small, positive noisy-data gains over custom last-token pooling, but the Welch tests from the available summaries do not make both proxy gains significant after Holm correction.",
-        "- The strongest response is to say we will revise the abstract/headline claim to distinguish architecture/head effects from pooling effects, add statistical testing, and report the industrial/production evaluation separately.",
-        "- The production selected-5 result is the useful new evidence: attention beats custom last-token by 8.82 F1 points and default by 11.43 F1 points in the available 10-seed summary, with Holm-adjusted p-values below 0.001 in these Welch tests.",
+        "## Interpretation",
+        "",
+        f"- On noisy BANKING77, attention vs custom last-token is `+{fmt_pct(float(noisy_banking['mean_diff']))}` F1 points with paired `p={fmt_p(float(noisy_banking['p']))}` and Holm `p={fmt_p(float(noisy_banking['p_holm']))}`.",
+        f"- On noisy CLINC150, attention vs custom last-token is `+{fmt_pct(float(noisy_clinc['mean_diff']))}` F1 points with paired `p={fmt_p(float(noisy_clinc['p']))}` and Holm `p={fmt_p(float(noisy_clinc['p_holm']))}`.",
+        "- So the rebuttal should not defend `+2.6-2.8 F1` as a pooling-only result. It should explicitly revise the claim: the large gain is a custom-head/system gain over C0; the pooling-only gains over C3 are modest on proxy data.",
+        f"- The production selected-5 result is much stronger: attention beats custom last-token by `{fmt_pct(float(production['mean_diff']))}` F1 points and default by `{fmt_pct(float(production_default['mean_diff']))}` F1 points.",
         "",
         "## Suggested Rebuttal Language",
         "",
-        "> We thank the reviewer for pointing out that our headline comparison conflated the custom-head change with the pooling operator. We agree and will revise the abstract and results discussion to separate these effects. Using the fairer custom-head last-token baseline, attention pooling improves noisy BANKING77 by 0.34 F1 points and noisy CLINC150 by 0.46 F1 points; these are modest gains and should not be described as the main +2.6-2.8 point effect. We have now added significance testing across the ten seeds. In addition, our new held-out production evaluation shows that the same attention-pooling configuration outperforms the custom last-token baseline by 8.82 F1 points and the default head by 11.43 F1 points, which is the stronger empirical support for the deployment claim. We will update the paper to report these tests and temper the headline claim accordingly.",
+        "> We thank the reviewer for pointing out that our headline comparison conflated the custom-head change with the pooling operator. We agree and will revise the abstract and results discussion to separate these effects. Using the fairer custom-head last-token baseline, attention pooling improves noisy BANKING77 and noisy CLINC150 by modest margins, and we now report paired tests over the ten matched seeds. The larger +2.6-2.8 F1 numbers should be described as gains over the default-head baseline rather than pooling-only gains. We will temper the headline claim accordingly and add the new industrial held-out evaluation, where the same attention-pooling configuration shows a substantially larger and statistically supported gain over both the default head and custom last-token baseline.",
         "",
-        "## Paired-Test Note",
+        "## Output Files",
         "",
-        "A paired t-test should be run on matched seed-level F1 values before final paper revision. The current repository copy does not include the raw seed-level folders for aggregations 62/63/66/67/71, only the aggregate summary files. If those folders are restored, the paired test should compare the ten seed-wise differences for attention vs custom last-token on each dataset.",
+        "- `per_seed_metrics.csv`: raw seed-level metrics extracted from `raw_results_pull`.",
+        "- `metric_summary.csv`: mean/std/count for each aggregation and configuration.",
+        "- `primary_paired_tests.csv`: paired tests for attention vs default and attention vs custom last-token across accuracy, precision, recall, and F1.",
+        "- `all_pairwise_f1_paired_tests.csv`: all pairwise F1 paired tests within each aggregation.",
         "",
     ]
 
+    (OUT_DIR / "significance_results.md").write_text("\n".join(lines), encoding="utf-8")
+
+
+def main() -> None:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    OUT_MD.write_text("\n".join(lines), encoding="utf-8")
-    print(OUT_MD)
+    data = load_raw_results()
+    problems = ensure_complete(data)
+    if problems:
+        joined = "\n".join(f"- {p}" for p in problems)
+        raise SystemExit(f"Raw result coverage is incomplete:\n{joined}")
+
+    per_seed_rows = build_per_seed_rows(data)
+    summary_rows = build_summary_rows(data)
+    primary_rows = build_primary_tests(data)
+    pairwise_rows = build_all_pairwise_f1(data)
+
+    write_csv(
+        OUT_DIR / "per_seed_metrics.csv",
+        per_seed_rows,
+        ["aggregation", "dataset", "experiment", "seed", *METRICS],
+    )
+    write_csv(
+        OUT_DIR / "metric_summary.csv",
+        summary_rows,
+        [
+            "aggregation",
+            "dataset",
+            "experiment",
+            "n",
+            *[f"{metric}_{stat}" for metric in METRICS for stat in ["mean", "sd"]],
+        ],
+    )
+    test_fields = [
+        "aggregation",
+        "dataset",
+        "metric",
+        "comparison",
+        "treatment",
+        "comparator",
+        "n",
+        "seeds",
+        "treatment_mean",
+        "treatment_sd",
+        "comparator_mean",
+        "comparator_sd",
+        "mean_diff",
+        "diff_sd",
+        "ci_low",
+        "ci_high",
+        "t",
+        "df",
+        "p",
+        "p_holm",
+        "wilcoxon_p",
+        "cohen_dz",
+    ]
+    write_csv(OUT_DIR / "primary_paired_tests.csv", primary_rows, test_fields)
+    write_csv(OUT_DIR / "all_pairwise_f1_paired_tests.csv", pairwise_rows, test_fields)
+    write_markdown(data, summary_rows, primary_rows)
+
+    print(OUT_DIR / "significance_results.md")
 
 
 if __name__ == "__main__":
