@@ -47,12 +47,17 @@ sns.set_palette("husl")
 def extract_base_name(experiment_name: str) -> Optional[str]:
     """
     Extract base experiment name from full experiment name.
-    
-    Example: "35_l_default_10" -> "35_l_default"
-    Pattern: base_name_per_config_exp_num (after removing global_exp_num from path)
+
+    Supports both directory naming schemes used by the pipeline:
+    - "35_l_default_10" -> "35_l_default"
+    - "35_l_default_8_10" -> "35_l_default"
     """
-    # Pattern: base_name_per_config_exp_num
-    # We want to extract everything before the last number
+    # Full job/config name: base_name_global_exp_num_per_config_exp_num
+    full_match = re.match(r'^(.+)_(\d+)_(\d+)$', experiment_name)
+    if full_match:
+        return full_match.group(1)
+
+    # Directory name after nesting under global_exp_num: base_name_per_config_exp_num
     match = re.match(r'^(.+)_(\d+)$', experiment_name)
     if match:
         return match.group(1)
@@ -75,10 +80,15 @@ def extract_global_experiment_number(experiment_name: str) -> Optional[int]:
 def extract_run_number(experiment_name: str) -> Optional[int]:
     """
     Extract per-config experiment number (run number) from full experiment name.
-    
-    Example: "35_l_default_10" -> 10
-    Pattern: base_name_per_config_exp_num
+
+    Supports both:
+    - "35_l_default_10" -> 10
+    - "35_l_default_8_10" -> 10
     """
+    full_match = re.match(r'^(.+)_(\d+)_(\d+)$', experiment_name)
+    if full_match:
+        return int(full_match.group(3))
+
     match = re.match(r'^(.+)_(\d+)$', experiment_name)
     if match:
         return int(match.group(2))
@@ -371,8 +381,8 @@ def create_aggregation_table(aggregated: Dict[str, Dict[str, List[float]]]) -> p
                     row[metric] = f"{stats['mean']:.4f} ± {stats['std']:.4f}"
                 else:
                     row[metric] = "N/A"
-            
-            table_data.append(row)
+
+        table_data.append(row)
     
     df = pd.DataFrame(table_data)
     return df
