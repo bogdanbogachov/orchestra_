@@ -6,6 +6,7 @@ from commands.inference.default import run_infer_default
 from commands.inference.custom import run_infer_custom
 from commands.evaluation.evaluate import run_evaluation
 from commands.evaluation.aggregate_results import run_aggregate_results
+from commands.evaluation.pull_raw_results import run_pull_raw_results
 from commands.charts.charts import run_charts
 from config import CONFIG
 from logger_config import logger
@@ -59,7 +60,13 @@ if __name__ == '__main__':
         logger.info("STEP: AGGREGATE RESULTS")
         logger.info("=" * 100)
         run_aggregate_results(global_exp_num=args.global_exp_num)
-    
+
+    if args.pull_raw_results:
+        logger.info("=" * 100)
+        logger.info("STEP: PULL RAW RESULTS")
+        logger.info("=" * 100)
+        run_pull_raw_results(experiment_nums=args.experiment_nums, output_dir=args.raw_results_output_dir)
+
     if args.charts:
         if not args.aggregation_nums:
             parser.error("--aggregation_nums is required when using --charts")

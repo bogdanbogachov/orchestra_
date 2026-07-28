@@ -8,3 +8,6 @@ venv
 downloaded_models/*
 
 additional_data
+
+# Pulled evaluation results
+raw_results_pull

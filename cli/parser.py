@@ -21,4 +21,10 @@ def build_parser() -> argparse.ArgumentParser:
                         help="List of aggregation numbers to include in charts (required when using --charts)")
     parser.add_argument("--aggregation_names", type=str, nargs='+', default=None,
                         help="List of custom names for aggregations (must match length of --aggregation_nums)")
+    parser.add_argument("--pull_raw_results", type=str_to_bool, default=False,
+                        help="Copy evaluation_results.json files for the indicated experiments into a raw results folder")
+    parser.add_argument("--experiment_nums", type=int, nargs='+', default=None,
+                        help="List of global experiment numbers to pull (default: all found under paths.experiments)")
+    parser.add_argument("--raw_results_output_dir", type=str, default="raw_results_pull",
+                        help="Root folder to copy pulled evaluation_results.json files into (default: raw_results_pull)")
     return parser
