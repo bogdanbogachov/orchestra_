@@ -23,5 +23,5 @@ add_baseline_experiments() {
 }
 
 # Edit global experiment numbers before submitting if needed.
-add_baseline_experiments "clinc_sbert_linear" "sbert_linear" 75 1 10
-add_baseline_experiments "clinc_distilbert_cls" "distilbert_cls" 75 1 10
+add_baseline_experiments "clinc_noise_sbert_linear" "sbert_linear" 76 1 10
+add_baseline_experiments "clinc_noise_distilbert_cls" "distilbert_cls" 76 1 10

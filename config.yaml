@@ -18,8 +18,8 @@ paths:
   experiments: "experiments"
   data:
     training: "training_data.json"
-    train: "clinc150_train.json"
-    test: "clinc150_test.json"
+    train: "noise_clinc150_train.json"
+    test: "noise_clinc150_test.json"
 
 lora:
   r: 4
