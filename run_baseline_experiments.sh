@@ -20,6 +20,8 @@ if [[ ${#BASELINE_EXPERIMENTS[@]} -eq 0 ]]; then
     exit 1
 fi
 
+mkdir -p _err_out
+
 get_seed_for_experiment() {
     local exp_name=$1
     if [[ "$exp_name" =~ _([0-9]+)$ ]]; then
@@ -36,5 +38,9 @@ for config in "${BASELINE_EXPERIMENTS[@]}"; do
     seed=$(get_seed_for_experiment "$exp_name")
 
     echo "Submitting baseline: EXP=$exp_name BASELINE=$baseline SEED=$seed"
-    EXP="$exp_name" BASELINE="$baseline" SEED="$seed" sbatch -J "$exp_name" baseline_job.sh
+    EXP="$exp_name" BASELINE="$baseline" SEED="$seed" \
+        sbatch -J "$exp_name" \
+        --output="_err_out/${exp_name}.out" \
+        --error="_err_out/${exp_name}.err" \
+        baseline_job.sh
 done
