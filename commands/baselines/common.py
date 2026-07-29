@@ -16,7 +16,7 @@ from config import CONFIG
 from logger_config import logger
 
 
-BASELINE_HEADS = {"sbert_linear", "distilbert_cls"}
+BASELINE_HEADS = {"sbert_linear", "distilbert_cls", "distilbert_attention"}
 
 
 def load_json_dataset(path: str) -> Tuple[List[str], List[int]]:

@@ -25,7 +25,7 @@ from config import CONFIG
 from logger_config import logger
 
 
-RESULT_SUBDIRS = ["default_head", "custom_head", "sbert_linear", "distilbert_cls"]
+RESULT_SUBDIRS = ["default_head", "custom_head", "sbert_linear", "distilbert_cls", "distilbert_attention"]
 
 # Set publication-quality matplotlib settings
 rcParams['font.family'] = 'serif'
@@ -305,6 +305,8 @@ def get_experiment_sort_key(exp_name: str) -> int:
     if 'sbert' in exp_lower or 'minilm' in exp_lower:
         return 10
     if 'distilbert' in exp_lower:
+        if 'attention' in exp_lower:
+            return 12
         return 11
     
     # Check for default (not custom)

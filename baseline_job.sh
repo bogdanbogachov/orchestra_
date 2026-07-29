@@ -32,8 +32,16 @@ case "${BASELINE}" in
       --num-train-epochs "${DISTILBERT_EPOCHS:-10}" \
       --learning-rate "${DISTILBERT_LR:-0.00002}"
     ;;
+  distilbert_attention)
+    python baselines/run_distilbert_attention.py \
+      --model-name "downloaded_models/distilbert-base-uncased" \
+      --batch-size "${BASELINE_BATCH_SIZE:-32}" \
+      --max-length "${BASELINE_MAX_LENGTH:-128}" \
+      --num-train-epochs "${DISTILBERT_EPOCHS:-10}" \
+      --learning-rate "${DISTILBERT_LR:-0.00002}"
+    ;;
   *)
-    echo "Unknown BASELINE='${BASELINE}'. Use BASELINE=sbert_linear or BASELINE=distilbert_cls." >&2
+    echo "Unknown BASELINE='${BASELINE}'. Use BASELINE=sbert_linear, distilbert_cls, or distilbert_attention." >&2
     exit 2
     ;;
 esac
