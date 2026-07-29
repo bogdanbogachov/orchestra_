@@ -50,7 +50,12 @@ class DistilBertAttentionPoolingClassifier(nn.Module):
         return (hidden_states * attention_weights).sum(dim=1)
 
     def forward(self, input_ids=None, attention_mask=None, labels=None, **kwargs):
-        outputs = self.encoder(input_ids=input_ids, attention_mask=attention_mask, **kwargs)
+        encoder_kwargs = {
+            key: value
+            for key, value in kwargs.items()
+            if key in {"head_mask", "inputs_embeds", "output_attentions", "output_hidden_states", "return_dict"}
+        }
+        outputs = self.encoder(input_ids=input_ids, attention_mask=attention_mask, **encoder_kwargs)
         pooled = self.pool_hidden_states(outputs.last_hidden_state, attention_mask)
         logits = self.classifier(pooled)
 
