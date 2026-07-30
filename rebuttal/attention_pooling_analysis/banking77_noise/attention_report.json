@@ -1,0 +1,13 @@
+{
+  "adapter_path": "experiments/62/banking77_noise_custom_attention_7/custom_head",
+  "dataset": "noise_banking77_test.json",
+  "clean_dataset": "banking77_test.json",
+  "samples_analyzed": 200,
+  "clean_spans_found": 186,
+  "comparable_original_noise_examples": 184,
+  "original_mass": 0.8853582003678345,
+  "noise_mass": 0.11413779923171737,
+  "original_mean_weight": 0.08354320690306988,
+  "noise_mean_weight": 0.019952550105261358,
+  "top_k_original_fraction": 0.8108695652173913
+}
