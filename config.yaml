@@ -18,8 +18,8 @@ paths:
   experiments: "experiments"
   data:
     training: "training_data.json"
-    train: "banking77_train.json"
-    test: "banking77_test.json"
+    train: "additional_data/additional_train.json"
+    test: "additional_data/additional_test.json"
 
 lora:
   r: 4
