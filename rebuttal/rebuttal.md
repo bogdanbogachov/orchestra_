@@ -54,3 +54,9 @@ Thank you for your comments.
 9. **Scope clarifications.** The attention-pooling module is a single learned linear token scorer followed by masked softmax; multi-head/additive/gated pooling are future variants. We will clean figure/caption wording and replace "controlled distribution shift" with "mild lexical/style shift."
 
 Reference: Ennadir et al. (2025), *Pool Me Wisely*, NeurIPS. https://arxiv.org/abs/2510.03339
+
+## Reviewer Comment 3 Follow-up
+
+The main claim of the paper is **Pareto efficiency**, not **accuracy dominance**. We apologize that the manuscript did not make this distinction clear enough. Attention pooling should not be read as a universal winner over custom last-token pooling in accuracy alone; rather, the claim is that attention is a strong **Pareto-efficient pooling choice**, offering **competitive or best noisy F1** while reducing **training energy/carbon** relative to dominated alternatives such as mean pooling. Last-token remains a strong and competitive pooling choice, especially on clean inputs.
+
+We agree that attention vs custom last-token is the correct controlled comparison for isolating the pooling operator. The new tests show that the proxy-dataset accuracy gains over custom last-token are modest and **not significant after Holm correction**, so we will temper wording that could be read as claiming accuracy superiority under noise. At the same time, the additional DistilBERT experiments support the intended **efficiency claim**: attention pooling trains with **less energy than CLS** on every matched dataset while maintaining **competitive accuracy**. The lightweight baselines further clarify that backbone choice is deployment-dependent. We will revise the abstract and conclusion to make the existing **Pareto-efficiency claim** more explicit.
