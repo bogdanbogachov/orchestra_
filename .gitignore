@@ -11,3 +11,11 @@ additional_data
 
 # Pulled evaluation results
 raw_results_pull
+
+experiments/
+aggregations/
+.idea/
+charts/
+logs/
+poster_plots/
+rebuttal_significance
