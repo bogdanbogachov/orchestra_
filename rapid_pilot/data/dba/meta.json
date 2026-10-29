@@ -1,0 +1,35 @@
+{
+  "task": "dba",
+  "source": "Stack Exchange data dump, archive.org snapshot 2024-04-01 (CC BY-SA; see ContentLicense per post)",
+  "label_names": [
+    "mongodb",
+    "mysql",
+    "oracle",
+    "postgresql",
+    "sql-server"
+  ],
+  "counts": {
+    "train": 13604,
+    "val_singles": 1000,
+    "test_singles": 2500,
+    "fit_groups": 1150,
+    "val_groups": 588,
+    "test_groups": 1207
+  },
+  "groups": {
+    "fit_groups": 513,
+    "val_groups": 256,
+    "test_groups": 515
+  },
+  "dropped_groups": {
+    "too_large": 4,
+    "unlabelled_or_mixed_label": 178,
+    "rare_label": 9
+  },
+  "max_group_size": 20,
+  "singles_cap": {
+    "train": 3000,
+    "val": 200,
+    "test": 500
+  }
+}

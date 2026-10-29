@@ -1,0 +1,36 @@
+{
+  "task": "site",
+  "source": "Stack Exchange data dump, archive.org snapshot 2024-04-01 (CC BY-SA; see ContentLicense per post)",
+  "label_names": [
+    "dba",
+    "diy",
+    "electronics",
+    "gis",
+    "mechanics",
+    "networkengineering",
+    "unix"
+  ],
+  "counts": {
+    "train": 21000,
+    "val_singles": 1400,
+    "test_singles": 3500,
+    "fit_groups": 12677,
+    "val_groups": 6235,
+    "test_groups": 12583
+  },
+  "groups": {
+    "fit_groups": 5174,
+    "val_groups": 2587,
+    "test_groups": 5175
+  },
+  "dropped_groups": {
+    "too_large": 50,
+    "rare_label": 0
+  },
+  "max_group_size": 20,
+  "singles_cap": {
+    "train": 3000,
+    "val": 200,
+    "test": 500
+  }
+}

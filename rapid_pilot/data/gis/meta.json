@@ -1,0 +1,37 @@
+{
+  "task": "gis",
+  "source": "Stack Exchange data dump, archive.org snapshot 2024-04-01 (CC BY-SA; see ContentLicense per post)",
+  "label_names": [
+    "esri",
+    "gdal",
+    "gee",
+    "postgis",
+    "qgis",
+    "r",
+    "web"
+  ],
+  "counts": {
+    "train": 21000,
+    "val_singles": 1400,
+    "test_singles": 3500,
+    "fit_groups": 2134,
+    "val_groups": 1092,
+    "test_groups": 2097
+  },
+  "groups": {
+    "fit_groups": 918,
+    "val_groups": 459,
+    "test_groups": 918
+  },
+  "dropped_groups": {
+    "unlabelled_or_mixed_label": 770,
+    "too_large": 5,
+    "rare_label": 0
+  },
+  "max_group_size": 20,
+  "singles_cap": {
+    "train": 3000,
+    "val": 200,
+    "test": 500
+  }
+}

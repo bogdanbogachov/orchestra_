@@ -1,5 +1,5 @@
 # Cache files
-__pycache__/*
+__pycache__/
 
 # Environment variables
 venv
@@ -19,3 +19,6 @@ charts/
 logs/
 poster_plots/
 rebuttal_significance
+
+# Rapid pilot run outputs
+rapid_pilot/runs/
