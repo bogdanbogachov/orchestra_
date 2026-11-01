@@ -37,8 +37,8 @@ blockquotes are stripped, together with every link or URL to another question.
    To rebuild it from the dumps:
    `python -I rapid_pilot/build_data.py --dumps <dir>/<site>/x/ --out rapid_pilot/data`.
 2. Make sure `downloaded_models/downloaded_3_2_1b` is present.
-3. Submit the job: `sbatch rapid_pilot/job.sh`. This runs a 3-task array in parallel, one GPU each,
-   with a 1.5 h limit and 16 GB RAM.
+3. Submit one job per task: `sbatch rapid_pilot/job.sh dba` (likewise `gis`, `site`). Each is a
+   standalone job on one GPU with 16 GB RAM.
 4. Once all three tasks finish, print the go/no-go summary:
    `python -m rapid_pilot.summarize --runs rapid_pilot/runs`.
 

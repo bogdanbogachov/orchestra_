@@ -9,11 +9,10 @@
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=16G
 #SBATCH --gpus=nvidia_h100_80gb_hbm3_2g.20gb:1
-#SBATCH --array=0-2
-#SBATCH --output=_err_out/rapid_pilot_%A_%a.out
+#SBATCH --output=_err_out/%x_%j.out
 
-TASKS=(site gis dba)
-TASK=${TASKS[$SLURM_ARRAY_TASK_ID]}
+# Usage: sbatch rapid_pilot/job.sh <site|gis|dba>
+TASK=${1:?usage: sbatch rapid_pilot/job.sh <site|gis|dba>}
 
 module load python/3.11.5
 module load gcc cuda/12.2
